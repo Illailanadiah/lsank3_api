@@ -16,9 +16,9 @@ return new class extends Migration
 
         Schema::create('lsank_users', function (Blueprint $table) {
             $table->id('user_id');
-            $table->string('full_name');
+            $table->string('name');
             $table->string('email')->unique();
-            $table->string('phone_no')->nullable();
+            $table->string('phone')->nullable();
             $table->string('password');
             $table->enum('user_type', ['public', 'internal', 'admin'])->default('public');
             $table->enum('status', ['active', 'inactive', 'suspended'])->default('active');
@@ -88,7 +88,7 @@ return new class extends Migration
             $table->string('applicant_name');
             $table->string('identity_no')->nullable();
             $table->string('email')->nullable();
-            $table->string('phone_no')->nullable();
+            $table->string('phone')->nullable();
             $table->text('address')->nullable();
             $table->enum('status', ['active', 'inactive'])->default('active');
             $table->timestamps();
@@ -686,7 +686,7 @@ return new class extends Migration
             $table->id('contact_id');
             $table->string('organization_name')->default('Lembaga Sumber Air Negeri Kedah');
             $table->text('address')->nullable();
-            $table->string('phone_no')->nullable();
+            $table->string('phone')->nullable();
             $table->string('email')->nullable();
             $table->string('website')->nullable();
             $table->string('operating_hours')->nullable();
@@ -699,7 +699,7 @@ return new class extends Migration
             $table->unsignedBigInteger('user_id')->nullable();
             $table->string('name');
             $table->string('email')->nullable();
-            $table->string('phone_no')->nullable();
+            $table->string('phone')->nullable();
             $table->string('subject')->nullable();
             $table->text('message');
             $table->enum('status', ['new', 'in_progress', 'closed'])->default('new');

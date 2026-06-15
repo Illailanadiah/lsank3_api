@@ -142,4 +142,30 @@ class AuthController extends Controller
             'data' => $users,
         ]);
     }
+
+    public function createUser(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|unique:lsank_users,email',
+            'phone' => 'nullable|string|max:30',
+            'user_type' => 'required|string',
+            'password' => 'required|string|min:6',
+        ]);
+
+        $user = LsankUser::create([
+            'name' => $request->name,
+            'email' => $request->email,
+            'phone' => $request->phone,
+            'password' => Hash::make($request->password),
+            'user_type' => $request->user_type,
+            'status' => 'active',
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Pengguna berjaya ditambah',
+            'data' => $user,
+        ], 201);
+    }
 }

@@ -121,4 +121,25 @@ class AuthController extends Controller
             'user' => $user,
         ]);
     }
+
+    public function users(Request $request)
+    {
+        $users = LsankUser::query()
+            ->select(
+                'user_id',
+                'name',
+                'email',
+                'phone',
+                'user_type',
+                'status',
+                'created_at'
+            )
+            ->orderByDesc('created_at')
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => $users,
+        ]);
+    }
 }

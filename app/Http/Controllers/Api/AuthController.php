@@ -26,7 +26,7 @@ class AuthController extends Controller
             'phone' => $request->phone,
             'password' => Hash::make($request->password),
             'ic_no' => $request->ic_no,
-            'user_type' => 'public',
+            'user_type' => 'Pengguna',
             'status' => 'active',
         ]);
 

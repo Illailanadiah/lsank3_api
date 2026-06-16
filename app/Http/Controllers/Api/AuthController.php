@@ -130,6 +130,7 @@ class AuthController extends Controller
             ->select(
                 'user_id',
                 'name',
+                'ic_no',
                 'email',
                 'phone',
                 'user_type',

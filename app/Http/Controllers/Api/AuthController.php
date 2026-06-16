@@ -13,17 +13,19 @@ class AuthController extends Controller
     public function register(Request $request)
     {
         $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'required|email|unique:lsank_users,email',
-            'phone' => 'nullable|string|max:30',
-            'password' => 'required|string|min:6',
-        ]);
+    'ic_no' => 'required|string|max:20|unique:lsank_users,ic_no',
+    'name' => 'required|string|max:255',
+    'email' => 'required|email|unique:lsank_users,email',
+    'phone' => 'nullable|string|max:30',
+    'password' => 'required|string|min:6',
+]);
 
         $user = LsankUser::create([
             'name' => $request->name,
             'email' => $request->email,
             'phone' => $request->phone,
             'password' => Hash::make($request->password),
+            'ic_no' => $request->ic_no,
             'user_type' => 'public',
             'status' => 'active',
         ]);
@@ -149,6 +151,7 @@ class AuthController extends Controller
             'name' => 'required|string|max:255',
             'email' => 'required|email|unique:lsank_users,email',
             'phone' => 'nullable|string|max:30',
+            'ic_no' => 'required|string|max:20|unique:lsank_users,ic_no',
             'user_type' => 'required|string',
             'password' => 'required|string|min:6',
         ]);
@@ -157,6 +160,7 @@ class AuthController extends Controller
             'name' => $request->name,
             'email' => $request->email,
             'phone' => $request->phone,
+            'ic_no' => $request->ic_no,
             'password' => Hash::make($request->password),
             'user_type' => $request->user_type,
             'status' => 'active',

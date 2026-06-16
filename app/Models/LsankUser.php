@@ -15,6 +15,7 @@ class LsankUser extends Authenticatable
     protected $primaryKey = 'user_id';
 
     protected $fillable = [
+        'ic_no',
         'name',
         'email',
         'phone',

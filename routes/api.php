@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\KedahAddressController;
 
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
@@ -14,4 +15,11 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('/users', [AuthController::class, 'users']);
     Route::post('/users', [AuthController::class, 'createUser']);
+});
+
+Route::prefix('kedah')->group(function () {
+    Route::get('/districts', [KedahAddressController::class, 'districts']);
+    Route::get('/cities', [KedahAddressController::class, 'cities']);
+    Route::get('/resolve-address', [KedahAddressController::class, 'resolve']);
+    Route::get('/search-address', [KedahAddressController::class, 'search']);
 });

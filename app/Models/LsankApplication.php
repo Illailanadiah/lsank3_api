@@ -13,6 +13,13 @@ class LsankApplication extends Model
     protected $fillable = [
         'application_ref_no',
         'user_id',
+        'applicant_id',
+        'application_type_id',
+        'application_status_id',
+        'application_category',
+        'submitted_at',
+        'remarks',
+
         'applicant_name',
         'business_name',
         'phone',
@@ -22,7 +29,6 @@ class LsankApplication extends Model
         'application_type',
         'payment_status',
         'application_status',
-        'submitted_at',
     ];
 
     protected $casts = [

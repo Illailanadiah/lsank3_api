@@ -23,6 +23,19 @@ class LsankCompany extends Model
 
     public function applicant()
     {
-        return $this->belongsTo(LsankApplicant::class, 'applicant_id', 'applicant_id');
+        return $this->belongsTo(
+            LsankApplicant::class,
+            'applicant_id',
+            'applicant_id'
+        );
+    }
+
+    public function officers()
+    {
+        return $this->hasMany(
+            LsankCompanyOfficer::class,
+            'company_id',
+            'company_id'
+        );
     }
 }

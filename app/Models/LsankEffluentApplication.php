@@ -25,6 +25,19 @@ class LsankEffluentApplication extends Model
 
     public function application()
     {
-        return $this->belongsTo(LsankApplication::class, 'application_id', 'application_id');
+        return $this->belongsTo(
+            LsankApplication::class,
+            'application_id',
+            'application_id'
+        );
+    }
+
+    public function serviceType()
+    {
+        return $this->belongsTo(
+            LsankServiceType::class,
+            'service_type_id',
+            'service_type_id'
+        );
     }
 }

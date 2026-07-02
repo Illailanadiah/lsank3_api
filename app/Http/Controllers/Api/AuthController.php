@@ -13,12 +13,12 @@ class AuthController extends Controller
     public function register(Request $request)
     {
         $request->validate([
-    'ic_no' => 'required|string|max:20|unique:lsank_users,ic_no',
-    'name' => 'required|string|max:255',
-    'email' => 'required|email|unique:lsank_users,email',
-    'phone' => 'nullable|string|max:30',
-    'password' => 'required|string|min:6',
-]);
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|unique:lsank_users,email',
+            'phone' => 'nullable|string|max:30',
+            'ic_no' => 'nullable|string|max:20|unique:lsank_users,ic_no',
+            'password' => 'required|string|min:6',
+        ]);
 
         $user = LsankUser::create([
             'name' => $request->name,

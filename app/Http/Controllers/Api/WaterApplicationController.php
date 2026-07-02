@@ -17,18 +17,27 @@ class WaterApplicationController extends Controller
 
     private const TYPE_CODE = 'WATER';
     private const TYPE_NAME = 'Aktiviti Badan Perairan';
-    private const REF_PREFIX = 'PBPA';
 
     public function index(Request $request)
     {
         $typeId = $this->applicationTypeId(self::TYPE_CODE, self::TYPE_NAME);
 
-        $applications = LsankApplication::with(['applicant', 'status', 'type', 'waterBody'])
+        $applications = LsankApplication::with([
+                'applicant',
+                'status',
+                'type',
+                'waterBody',
+            ])
             ->where('user_id', $request->user()->user_id)
             ->where('application_type_id', $typeId)
             ->latest('application_id')
             ->get()
-            ->map(fn ($application) => $this->formatApplicationListItem($application, self::TYPE_NAME));
+            ->map(function ($application) {
+                return $this->formatApplicationListItem(
+                    $application,
+                    self::TYPE_NAME
+                );
+            });
 
         return response()->json([
             'success' => true,
@@ -56,6 +65,8 @@ class WaterApplicationController extends Controller
             'responsible_officer_phone' => ['nullable', 'string', 'max:30'],
 
             'activity_type_id' => ['nullable', 'integer'],
+            'activity_name' => ['nullable', 'string', 'max:255'],
+            'district' => ['nullable', 'string', 'max:100'],
             'activity_location' => ['nullable', 'string'],
             'longitude' => ['nullable', 'numeric'],
             'latitude' => ['nullable', 'numeric'],
@@ -71,10 +82,18 @@ class WaterApplicationController extends Controller
         $statusId = $this->applicationStatusId('submitted', 'Dihantar', 2);
         $phoneColumn = $this->applicantPhoneColumn();
 
-        return DB::transaction(function () use ($validated, $user, $typeId, $statusId, $phoneColumn) {
+        return DB::transaction(function () use (
+            $validated,
+            $user,
+            $typeId,
+            $statusId,
+            $phoneColumn
+        ) {
             $applicantData = [
                 'user_id' => $user->user_id,
-                'applicant_type' => $this->normalizeApplicantType($validated['applicant_type'] ?? null),
+                'applicant_type' => $this->normalizeApplicantType(
+                    $validated['applicant_type'] ?? null
+                ),
                 'applicant_name' => $validated['applicant_name'],
                 'identity_no' => $validated['identity_no'] ?? null,
                 'email' => $validated['email'] ?? null,
@@ -82,7 +101,10 @@ class WaterApplicationController extends Controller
                 'status' => 'active',
             ];
 
-            $applicantData[$phoneColumn] = $validated['phone_no'] ?? $validated['phone'] ?? null;
+            $applicantData[$phoneColumn] =
+                $validated['phone_no'] ??
+                $validated['phone'] ??
+                null;
 
             $applicant = LsankApplicant::create($applicantData);
 
@@ -94,13 +116,18 @@ class WaterApplicationController extends Controller
                     'business_address' => $validated['business_address'] ?? null,
                     'business_phone' => $validated['business_phone'] ?? null,
                     'business_email' => $validated['business_email'] ?? null,
-                    'responsible_officer_name' => $validated['responsible_officer_name'] ?? null,
-                    'responsible_officer_phone' => $validated['responsible_officer_phone'] ?? null,
+                    'responsible_officer_name' =>
+                        $validated['responsible_officer_name'] ?? null,
+                    'responsible_officer_phone' =>
+                        $validated['responsible_officer_phone'] ?? null,
                 ]);
             }
 
             $application = LsankApplication::create([
-                'application_ref_no' => $this->generateReferenceNo(self::REF_PREFIX, $typeId),
+                'application_ref_no' => $this->generateApplicationFileNo(
+                    $this->waterSectionCode($validated['activity_name'] ?? null),
+                    $this->districtCode($validated['district'] ?? null)
+                ),
                 'user_id' => $user->user_id,
                 'applicant_id' => $applicant->applicant_id,
                 'application_type_id' => $typeId,
@@ -154,7 +181,10 @@ class WaterApplicationController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $this->formatApplicationDetail($application, self::TYPE_NAME),
+            'data' => $this->formatApplicationDetail(
+                $application,
+                self::TYPE_NAME
+            ),
         ]);
     }
 }

@@ -40,10 +40,55 @@ Route::middleware('auth:sanctum')->group(function () {
     |--------------------------------------------------------------------------
     | User Side - Water Applications
     |--------------------------------------------------------------------------
+    | Status flow:
+    | draf -> fi_pemprosesan -> dalam_proses -> lulus / gagal
+    |--------------------------------------------------------------------------
     */
     Route::prefix('applications/water')->group(function () {
         Route::get('/', [WaterApplicationController::class, 'index']);
+
+        /*
+        | User tengah isi borang atau keluar page sebelum bayar.
+        | Status akan kekal: draf
+        */
+        Route::post('/save-draft', [WaterApplicationController::class, 'saveDraft']);
+
+        /*
+        | Route lama, boleh kekal sementara untuk compatibility.
+        */
         Route::post('/', [WaterApplicationController::class, 'store']);
+
+        /*
+        | Bila user sudah tick Terms & Syarat dan klik Next.
+        | Status: draf -> fi_pemprosesan
+        */
+        Route::post('/{application}/generate-invoice', [
+            WaterApplicationController::class,
+            'generateInvoice',
+        ]);
+
+        /*
+        | Bila user klik Bayar dan bayaran berjaya.
+        | Status: fi_pemprosesan -> dalam_proses
+        */
+        Route::post('/{application}/pay', [
+            WaterApplicationController::class,
+            'pay',
+        ]);
+
+        /*
+        | User hanya boleh padam permohonan berstatus draf sahaja.
+        | Draf belum bayar dan belum masuk proses semakan.
+        */
+        Route::delete('/{application}/draft', [
+            WaterApplicationController::class,
+            'destroyDraft',
+        ]);
+
+        /*
+        | Detail permohonan user.
+        | Letak bawah supaya route lain tidak dikacau oleh {application}.
+        */
         Route::get('/{application}', [WaterApplicationController::class, 'show']);
     });
 
@@ -71,6 +116,12 @@ Route::middleware('auth:sanctum')->group(function () {
     |--------------------------------------------------------------------------
     | Admin Side - Applications
     |--------------------------------------------------------------------------
+    | Admin hanya patut nampak:
+    | dalam_proses, lulus, gagal
+    |
+    | Admin jangan nampak:
+    | draf, fi_pemprosesan
+    |--------------------------------------------------------------------------
     */
     Route::get('/admin/applications', [ApplicationController::class, 'adminApplications']);
 
@@ -82,6 +133,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('/admin/applications/{id}', [ApplicationController::class, 'show']);
 
+    /*
+    | Admin update status:
+    | dalam_proses -> lulus / gagal
+    */
     Route::post('/admin/applications/{id}/status', [ApplicationController::class, 'updateStatus']);
     Route::post('/admin/applications/{id}/review', [ApplicationController::class, 'review']);
 });

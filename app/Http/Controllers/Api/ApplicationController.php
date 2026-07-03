@@ -75,6 +75,11 @@ class ApplicationController extends Controller
             'data' => $applications,
         ]);
     }
+/*
+|--------------------------------------------------------------------------
+| Admin Side - All Applications
+|--------------------------------------------------------------------------
+*/
 
     /*
     |--------------------------------------------------------------------------
@@ -177,7 +182,82 @@ class ApplicationController extends Controller
                 'message' => 'Permohonan tidak dijumpai atau belum layak untuk semakan admin.',
             ], 404);
         }
+private function applicationBaseQuery()
+{
+    return LsankApplication::with([
+        'applicant',
+        'type',
+        'status',
+        'waterBody',
+        'effluent',
+    ]);
+}
 
+public function adminApplications()
+{
+    $applications = $this->applicationBaseQuery()
+        ->orderByDesc('application_id')
+        ->get();
+
+    return response()->json([
+        'success' => true,
+        'applications' => $applications,
+    ]);
+}
+
+public function adminWaterApplications()
+{
+    $applications = $this->applicationBaseQuery()
+        ->where(function ($query) {
+            $query->where('license_type', 'Aktiviti Badan Perairan')
+                ->orWhere('application_type_id', 1)
+                ->orWhereHas('type', function ($typeQuery) {
+                    $typeQuery->where('type_code', 'WATER');
+                })
+                ->orWhereHas('waterBody');
+        })
+        ->orderByDesc('application_id')
+        ->get();
+
+    return response()->json([
+        'success' => true,
+        'applications' => $applications,
+    ]);
+}
+
+public function adminEffluentApplications()
+{
+    $applications = $this->applicationBaseQuery()
+        ->where(function ($query) {
+            $query->where('license_type', 'Aktiviti Pelepasan Efluen')
+                ->orWhere('application_type_id', 2)
+                ->orWhereHas('type', function ($typeQuery) {
+                    $typeQuery->where('type_code', 'EFFLUENT');
+                })
+                ->orWhereHas('effluent');
+        })
+        ->orderByDesc('application_id')
+        ->get();
+
+    return response()->json([
+        'success' => true,
+        'applications' => $applications,
+    ]);
+}
+
+/*
+|--------------------------------------------------------------------------
+| Admin Side - Application Detail
+|--------------------------------------------------------------------------
+*/
+
+public function show($id)
+{
+    $application = $this->applicationBaseQuery()
+        ->where('application_id', $id)
+        ->first();
+
+    if (!$application) {
         return response()->json([
             'success' => true,
             'application' => $this->formatApplication($application),
@@ -206,7 +286,32 @@ class ApplicationController extends Controller
                 'message' => 'Permohonan badan perairan tidak dijumpai atau belum layak untuk semakan admin.',
             ], 404);
         }
+            'success' => false,
+            'message' => 'Permohonan tidak dijumpai.',
+        ], 404);
+    }
 
+    return response()->json([
+        'success' => true,
+        'application' => $application,
+    ]);
+}
+
+public function showWater($id)
+{
+    $application = $this->applicationBaseQuery()
+        ->where('application_id', $id)
+        ->where(function ($query) {
+            $query->where('license_type', 'Aktiviti Badan Perairan')
+                ->orWhere('application_type_id', 1)
+                ->orWhereHas('type', function ($typeQuery) {
+                    $typeQuery->where('type_code', 'WATER');
+                })
+                ->orWhereHas('waterBody');
+        })
+        ->first();
+
+    if (!$application) {
         return response()->json([
             'success' => true,
             'application' => $this->formatApplication($application),
@@ -230,14 +335,47 @@ class ApplicationController extends Controller
                 'message' => 'Permohonan efluen tidak dijumpai.',
             ], 404);
         }
+            'success' => false,
+            'message' => 'Permohonan badan perairan tidak dijumpai.',
+        ], 404);
+    }
 
+    return response()->json([
+        'success' => true,
+        'application' => $application,
+    ]);
+}
+
+public function showEffluent($id)
+{
+    $application = $this->applicationBaseQuery()
+        ->where('application_id', $id)
+        ->where(function ($query) {
+            $query->where('license_type', 'Aktiviti Pelepasan Efluen')
+                ->orWhere('application_type_id', 2)
+                ->orWhereHas('type', function ($typeQuery) {
+                    $typeQuery->where('type_code', 'EFFLUENT');
+                })
+                ->orWhereHas('effluent');
+        })
+        ->first();
+
+    if (!$application) {
         return response()->json([
             'success' => true,
             'application' => $this->formatApplication($application),
             'data' => $this->formatApplication($application),
         ]);
+            'success' => false,
+            'message' => 'Permohonan efluen tidak dijumpai.',
+        ], 404);
     }
 
+    return response()->json([
+        'success' => true,
+        'application' => $application,
+    ]);
+}
     /*
     |--------------------------------------------------------------------------
     | Admin Side - Status / Review

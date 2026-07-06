@@ -50,6 +50,7 @@ class ApplicationController extends Controller
             'success' => true,
             'message' => 'Permohonan badan perairan berjaya dihantar.',
             'application' => $this->formatApplication($application),
+            'data' => $this->formatApplication($application),
         ], 201);
     }
 
@@ -64,7 +65,8 @@ class ApplicationController extends Controller
 
     public function myApplications(Request $request)
     {
-        $applications = LsankApplication::where('user_id', $request->user()->user_id)
+        $applications = $this->applicationBaseQuery()
+            ->where('user_id', $request->user()->user_id)
             ->orderByDesc('application_id')
             ->get()
             ->map(fn ($application) => $this->formatApplication($application));
@@ -75,33 +77,43 @@ class ApplicationController extends Controller
             'data' => $applications,
         ]);
     }
-/*
-|--------------------------------------------------------------------------
-| Admin Side - All Applications
-|--------------------------------------------------------------------------
-*/
 
     /*
     |--------------------------------------------------------------------------
-    | Admin Side - All Applications
+    | Admin Side - Application List
     |--------------------------------------------------------------------------
     | Admin hanya nampak permohonan yang sudah masuk semakan:
     | dalam_proses, lulus, gagal
     |--------------------------------------------------------------------------
     */
 
-    public function adminApplications()
+    private function applicationBaseQuery()
     {
-        $applications = LsankApplication::whereIn('application_status', [
+        return LsankApplication::with([
+            'applicant',
+            'type',
+            'status',
+            'waterBody',
+            'effluent',
+        ]);
+    }
+
+    private function adminEligibleQuery()
+    {
+        return $this->applicationBaseQuery()
+            ->whereIn('application_status', [
                 LsankApplication::STATUS_DALAM_PROSES,
                 LsankApplication::STATUS_LULUS,
                 LsankApplication::STATUS_GAGAL,
-            ])
+            ]);
+    }
+
+    public function adminApplications()
+    {
+        $applications = $this->adminEligibleQuery()
             ->orderByDesc('application_id')
             ->get()
-            ->map(function ($application) {
-                return $this->formatApplication($application);
-            });
+            ->map(fn ($application) => $this->formatApplication($application));
 
         return response()->json([
             'success' => true,
@@ -112,21 +124,20 @@ class ApplicationController extends Controller
 
     public function adminWaterApplications()
     {
-        $applications = LsankApplication::whereIn('application_status', [
-                LsankApplication::STATUS_DALAM_PROSES,
-                LsankApplication::STATUS_LULUS,
-                LsankApplication::STATUS_GAGAL,
-            ])
+        $applications = $this->adminEligibleQuery()
             ->where(function ($query) {
                 $query->where('license_type', 'Aktiviti Badan Perairan')
                     ->orWhere('application_type', 'water')
-                    ->orWhere('application_category', 'water');
+                    ->orWhere('application_category', 'water')
+                    ->orWhere('application_type_id', 1)
+                    ->orWhereHas('type', function ($typeQuery) {
+                        $typeQuery->where('type_code', 'WATER');
+                    })
+                    ->orWhereHas('waterBody');
             })
             ->orderByDesc('application_id')
             ->get()
-            ->map(function ($application) {
-                return $this->formatApplication($application);
-            });
+            ->map(fn ($application) => $this->formatApplication($application));
 
         return response()->json([
             'success' => true,
@@ -137,21 +148,20 @@ class ApplicationController extends Controller
 
     public function adminEffluentApplications()
     {
-        $applications = LsankApplication::whereIn('application_status', [
-                LsankApplication::STATUS_DALAM_PROSES,
-                LsankApplication::STATUS_LULUS,
-                LsankApplication::STATUS_GAGAL,
-            ])
+        $applications = $this->adminEligibleQuery()
             ->where(function ($query) {
                 $query->where('license_type', 'Aktiviti Pelepasan Efluen')
                     ->orWhere('application_type', 'effluent')
-                    ->orWhere('application_category', 'effluent');
+                    ->orWhere('application_category', 'effluent')
+                    ->orWhere('application_type_id', 2)
+                    ->orWhereHas('type', function ($typeQuery) {
+                        $typeQuery->where('type_code', 'EFFLUENT');
+                    })
+                    ->orWhereHas('effluent');
             })
             ->orderByDesc('application_id')
             ->get()
-            ->map(function ($application) {
-                return $this->formatApplication($application);
-            });
+            ->map(fn ($application) => $this->formatApplication($application));
 
         return response()->json([
             'success' => true,
@@ -162,18 +172,14 @@ class ApplicationController extends Controller
 
     /*
     |--------------------------------------------------------------------------
-    | Application Detail
+    | Admin Side - Application Detail
     |--------------------------------------------------------------------------
     */
 
     public function show($id)
     {
-        $application = LsankApplication::where('application_id', $id)
-            ->whereIn('application_status', [
-                LsankApplication::STATUS_DALAM_PROSES,
-                LsankApplication::STATUS_LULUS,
-                LsankApplication::STATUS_GAGAL,
-            ])
+        $application = $this->adminEligibleQuery()
+            ->where('application_id', $id)
             ->first();
 
         if (!$application) {
@@ -182,82 +188,7 @@ class ApplicationController extends Controller
                 'message' => 'Permohonan tidak dijumpai atau belum layak untuk semakan admin.',
             ], 404);
         }
-private function applicationBaseQuery()
-{
-    return LsankApplication::with([
-        'applicant',
-        'type',
-        'status',
-        'waterBody',
-        'effluent',
-    ]);
-}
 
-public function adminApplications()
-{
-    $applications = $this->applicationBaseQuery()
-        ->orderByDesc('application_id')
-        ->get();
-
-    return response()->json([
-        'success' => true,
-        'applications' => $applications,
-    ]);
-}
-
-public function adminWaterApplications()
-{
-    $applications = $this->applicationBaseQuery()
-        ->where(function ($query) {
-            $query->where('license_type', 'Aktiviti Badan Perairan')
-                ->orWhere('application_type_id', 1)
-                ->orWhereHas('type', function ($typeQuery) {
-                    $typeQuery->where('type_code', 'WATER');
-                })
-                ->orWhereHas('waterBody');
-        })
-        ->orderByDesc('application_id')
-        ->get();
-
-    return response()->json([
-        'success' => true,
-        'applications' => $applications,
-    ]);
-}
-
-public function adminEffluentApplications()
-{
-    $applications = $this->applicationBaseQuery()
-        ->where(function ($query) {
-            $query->where('license_type', 'Aktiviti Pelepasan Efluen')
-                ->orWhere('application_type_id', 2)
-                ->orWhereHas('type', function ($typeQuery) {
-                    $typeQuery->where('type_code', 'EFFLUENT');
-                })
-                ->orWhereHas('effluent');
-        })
-        ->orderByDesc('application_id')
-        ->get();
-
-    return response()->json([
-        'success' => true,
-        'applications' => $applications,
-    ]);
-}
-
-/*
-|--------------------------------------------------------------------------
-| Admin Side - Application Detail
-|--------------------------------------------------------------------------
-*/
-
-public function show($id)
-{
-    $application = $this->applicationBaseQuery()
-        ->where('application_id', $id)
-        ->first();
-
-    if (!$application) {
         return response()->json([
             'success' => true,
             'application' => $this->formatApplication($application),
@@ -267,16 +198,17 @@ public function show($id)
 
     public function showWater($id)
     {
-        $application = LsankApplication::where('application_id', $id)
-            ->whereIn('application_status', [
-                LsankApplication::STATUS_DALAM_PROSES,
-                LsankApplication::STATUS_LULUS,
-                LsankApplication::STATUS_GAGAL,
-            ])
+        $application = $this->adminEligibleQuery()
+            ->where('application_id', $id)
             ->where(function ($query) {
                 $query->where('license_type', 'Aktiviti Badan Perairan')
                     ->orWhere('application_type', 'water')
-                    ->orWhere('application_category', 'water');
+                    ->orWhere('application_category', 'water')
+                    ->orWhere('application_type_id', 1)
+                    ->orWhereHas('type', function ($typeQuery) {
+                        $typeQuery->where('type_code', 'WATER');
+                    })
+                    ->orWhereHas('waterBody');
             })
             ->first();
 
@@ -286,32 +218,7 @@ public function show($id)
                 'message' => 'Permohonan badan perairan tidak dijumpai atau belum layak untuk semakan admin.',
             ], 404);
         }
-            'success' => false,
-            'message' => 'Permohonan tidak dijumpai.',
-        ], 404);
-    }
 
-    return response()->json([
-        'success' => true,
-        'application' => $application,
-    ]);
-}
-
-public function showWater($id)
-{
-    $application = $this->applicationBaseQuery()
-        ->where('application_id', $id)
-        ->where(function ($query) {
-            $query->where('license_type', 'Aktiviti Badan Perairan')
-                ->orWhere('application_type_id', 1)
-                ->orWhereHas('type', function ($typeQuery) {
-                    $typeQuery->where('type_code', 'WATER');
-                })
-                ->orWhereHas('waterBody');
-        })
-        ->first();
-
-    if (!$application) {
         return response()->json([
             'success' => true,
             'application' => $this->formatApplication($application),
@@ -321,61 +228,34 @@ public function showWater($id)
 
     public function showEffluent($id)
     {
-        $application = LsankApplication::where('application_id', $id)
+        $application = $this->adminEligibleQuery()
+            ->where('application_id', $id)
             ->where(function ($query) {
                 $query->where('license_type', 'Aktiviti Pelepasan Efluen')
                     ->orWhere('application_type', 'effluent')
-                    ->orWhere('application_category', 'effluent');
+                    ->orWhere('application_category', 'effluent')
+                    ->orWhere('application_type_id', 2)
+                    ->orWhereHas('type', function ($typeQuery) {
+                        $typeQuery->where('type_code', 'EFFLUENT');
+                    })
+                    ->orWhereHas('effluent');
             })
             ->first();
 
         if (!$application) {
             return response()->json([
                 'success' => false,
-                'message' => 'Permohonan efluen tidak dijumpai.',
+                'message' => 'Permohonan efluen tidak dijumpai atau belum layak untuk semakan admin.',
             ], 404);
         }
-            'success' => false,
-            'message' => 'Permohonan badan perairan tidak dijumpai.',
-        ], 404);
-    }
 
-    return response()->json([
-        'success' => true,
-        'application' => $application,
-    ]);
-}
-
-public function showEffluent($id)
-{
-    $application = $this->applicationBaseQuery()
-        ->where('application_id', $id)
-        ->where(function ($query) {
-            $query->where('license_type', 'Aktiviti Pelepasan Efluen')
-                ->orWhere('application_type_id', 2)
-                ->orWhereHas('type', function ($typeQuery) {
-                    $typeQuery->where('type_code', 'EFFLUENT');
-                })
-                ->orWhereHas('effluent');
-        })
-        ->first();
-
-    if (!$application) {
         return response()->json([
             'success' => true,
             'application' => $this->formatApplication($application),
             'data' => $this->formatApplication($application),
         ]);
-            'success' => false,
-            'message' => 'Permohonan efluen tidak dijumpai.',
-        ], 404);
     }
 
-    return response()->json([
-        'success' => true,
-        'application' => $application,
-    ]);
-}
     /*
     |--------------------------------------------------------------------------
     | Admin Side - Status / Review
@@ -419,11 +299,13 @@ public function showEffluent($id)
             'remarks' => $request->remarks,
         ]);
 
+        $fresh = $application->fresh();
+
         return response()->json([
             'success' => true,
             'message' => 'Status permohonan berjaya dikemaskini.',
-            'application' => $this->formatApplication($application->fresh()),
-            'data' => $this->formatApplication($application->fresh()),
+            'application' => $this->formatApplication($fresh),
+            'data' => $this->formatApplication($fresh),
         ]);
     }
 
@@ -463,11 +345,13 @@ public function showEffluent($id)
             'remarks' => $request->remarks,
         ]);
 
+        $fresh = $application->fresh();
+
         return response()->json([
             'success' => true,
             'message' => 'Semakan permohonan berjaya disimpan.',
-            'application' => $this->formatApplication($application->fresh()),
-            'data' => $this->formatApplication($application->fresh()),
+            'application' => $this->formatApplication($fresh),
+            'data' => $this->formatApplication($fresh),
         ]);
     }
 
@@ -506,22 +390,29 @@ public function showEffluent($id)
         };
     }
 
-    private function formatApplication(LsankApplication $application): array
+    private function formatApplication(?LsankApplication $application): array
     {
+        if (!$application) {
+            return [];
+        }
+
         return [
             'id' => $application->application_id,
             'application_id' => $application->application_id,
             'application_no' => $application->application_ref_no,
+            'application_ref_no' => $application->application_ref_no,
 
             'user_id' => $application->user_id,
             'applicant_id' => $application->applicant_id,
 
             'applicant_name' => $application->applicant_name
+                ?? optional($application->applicant)->applicant_name
                 ?? $application->company_name
                 ?? '-',
 
             'business_name' => $application->business_name
                 ?? $application->company_name
+                ?? optional(optional($application->applicant)->company)->company_name
                 ?? '-',
 
             'phone' => $application->phone
@@ -538,18 +429,24 @@ public function showEffluent($id)
 
             'activity_type' => $application->activity_type
                 ?? $application->activity_name
+                ?? optional($application->waterBody)->activity_details
                 ?? '-',
 
             'activity_name' => $application->activity_name
                 ?? $application->activity_type
+                ?? optional($application->waterBody)->activity_details
                 ?? '-',
 
             'activity_details' => $application->activity_details
+                ?? optional($application->waterBody)->activity_details
                 ?? $application->activity_name
                 ?? $application->activity_type
                 ?? '-',
 
-            'activity_location' => $application->activity_location ?? '-',
+            'activity_location' => $application->activity_location
+                ?? optional($application->waterBody)->activity_location
+                ?? '-',
+
             'district' => $application->district ?? '-',
 
             'application_type' => $application->application_type,
@@ -570,7 +467,9 @@ public function showEffluent($id)
             'remarks' => $application->remarks,
 
             'submitted_at' => optional($application->submitted_at)->toDateTimeString(),
-            'submitted_date' => optional($application->submitted_at ?? $application->created_at)->format('d M Y') ?? '-',
+            'submitted_date' => optional(
+                $application->submitted_at ?? $application->created_at
+            )->format('d M Y') ?? '-',
 
             'created_at' => optional($application->created_at)->toDateTimeString(),
             'updated_at' => optional($application->updated_at)->toDateTimeString(),
@@ -579,13 +478,21 @@ public function showEffluent($id)
 
     private function displayLicenseType(LsankApplication $application): string
     {
-        if ($application->application_type === 'water' ||
-            $application->application_category === 'water') {
+        if (
+            $application->application_type === 'water' ||
+            $application->application_category === 'water' ||
+            optional($application->type)->type_code === 'WATER' ||
+            $application->waterBody
+        ) {
             return 'Aktiviti Badan Perairan';
         }
 
-        if ($application->application_type === 'effluent' ||
-            $application->application_category === 'effluent') {
+        if (
+            $application->application_type === 'effluent' ||
+            $application->application_category === 'effluent' ||
+            optional($application->type)->type_code === 'EFFLUENT' ||
+            $application->effluent
+        ) {
             return 'Aktiviti Pelepasan Efluen';
         }
 

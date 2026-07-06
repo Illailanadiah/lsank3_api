@@ -33,6 +33,70 @@ class WaterApplicationController extends Controller
             ->latest('application_id')
             ->get()
             ->map(function ($application) {
+                $year = optional($application->created_at)->format('Y') ?? now()->format('Y');
+                $runningNo = str_pad($application->application_id, 4, '0', STR_PAD_LEFT);
+
+                $fees = $this->calculateWaterFees($application);
+
+                $invoiceItems = [];
+                $receiptItems = [];
+
+                if ($application->application_status !== LsankApplication::STATUS_DRAF) {
+                    $invoiceItems[] = [
+                        'invoice_id' => $application->application_id . '-PROCESSING',
+                        'invoice_no' => 'INVOIS-' . $year . '-' . $runningNo . '-01',
+                        'payment_type' => 'Fi Pemprosesan',
+                        'amount' => $fees['processing_fee'],
+                        'amount_display' => 'RM ' . number_format($fees['processing_fee'], 2),
+                        'invoice_date' => optional($application->created_at)->format('d/m/Y') ?? '-',
+                        'paid' => in_array($application->application_status, [
+                            LsankApplication::STATUS_DALAM_PROSES,
+                            LsankApplication::STATUS_LULUS,
+                            LsankApplication::STATUS_GAGAL,
+                        ], true) || $application->payment_status === LsankApplication::PAYMENT_SUDAH_BAYAR,
+                    ];
+                }
+
+                if ($application->application_status === LsankApplication::STATUS_LULUS) {
+                    $invoiceItems[] = [
+                        'invoice_id' => $application->application_id . '-SECURITY',
+                        'invoice_no' => 'INVOIS-' . $year . '-' . $runningNo . '-02',
+                        'payment_type' => 'Fi Sekuriti',
+                        'amount' => $fees['security_fee'],
+                        'amount_display' => 'RM ' . number_format($fees['security_fee'], 2),
+                        'invoice_date' => optional($application->updated_at)->format('d/m/Y') ?? '-',
+                        'paid' => false,
+                    ];
+
+                    $invoiceItems[] = [
+                        'invoice_id' => $application->application_id . '-LICENSE-CHARGE',
+                        'invoice_no' => 'INVOIS-' . $year . '-' . $runningNo . '-03',
+                        'payment_type' => 'Fi Lesen + Caj',
+                        'amount' => $fees['license_fee'] + $fees['charge_fee'],
+                        'amount_display' => 'RM ' . number_format($fees['license_fee'] + $fees['charge_fee'], 2),
+                        'invoice_date' => optional($application->updated_at)->format('d/m/Y') ?? '-',
+                        'paid' => false,
+                    ];
+                }
+
+                if (
+                    in_array($application->application_status, [
+                        LsankApplication::STATUS_DALAM_PROSES,
+                        LsankApplication::STATUS_LULUS,
+                        LsankApplication::STATUS_GAGAL,
+                    ], true) ||
+                    $application->payment_status === LsankApplication::PAYMENT_SUDAH_BAYAR
+                ) {
+                    $receiptItems[] = [
+                        'receipt_id' => $application->application_id . '-PROCESSING',
+                        'receipt_no' => 'RESIT-' . $year . '-' . $runningNo . '-01',
+                        'payment_type' => 'Fi Pemprosesan',
+                        'amount' => $fees['processing_fee'],
+                        'amount_display' => 'RM ' . number_format($fees['processing_fee'], 2),
+                        'paid_date' => optional($application->updated_at)->format('d/m/Y') ?? '-',
+                    ];
+                }
+
                 return [
                     'id' => $application->application_id,
                     'application_id' => $application->application_id,
@@ -98,6 +162,10 @@ class WaterApplicationController extends Controller
 
                     'created_at' => optional($application->created_at)->toDateTimeString(),
                     'updated_at' => optional($application->updated_at)->toDateTimeString(),
+
+                    'fees' => $fees,
+                    'invoice_items' => $invoiceItems,
+                    'receipt_items' => $receiptItems,
                 ];
             });
 
@@ -218,16 +286,31 @@ class WaterApplicationController extends Controller
 
             if (!$application) {
                 $application = new LsankApplication();
-                $application->application_ref_no = $this->generateDraftReferenceNo();
+                $application->application_ref_no = $this->generateDraftReferenceNo($user->user_id);
                 $application->user_id = $user->user_id;
                 $application->application_type_id = $typeId;
                 $application->application_category = 'new';
             }
 
             $application->applicant_id = $applicant->applicant_id;
-            $application->application_status_id = $statusId;
-            $application->application_status = LsankApplication::STATUS_DRAF;
-            $application->payment_status = LsankApplication::PAYMENT_BELUM_BAYAR;
+
+            if ($application->exists && $application->application_status === LsankApplication::STATUS_FI_PEMPROSESAN) {
+                $paymentStatusId = $this->applicationStatusId('payment', 'Fi Pemprosesan', 2);
+
+                $application->application_status_id = $paymentStatusId;
+                $application->application_status = LsankApplication::STATUS_FI_PEMPROSESAN;
+                $application->payment_status = LsankApplication::PAYMENT_MENUNGGU_BAYARAN;
+            } elseif (!$application->exists || $application->application_status === LsankApplication::STATUS_DRAF) {
+                $application->application_status_id = $statusId;
+                $application->application_status = LsankApplication::STATUS_DRAF;
+                $application->payment_status = LsankApplication::PAYMENT_BELUM_BAYAR;
+            } else {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Permohonan ini tidak boleh dikemaskini kerana telah dihantar untuk semakan.',
+                ], 422);
+            }
+
             $application->current_step = $validated['current_step'] ?? 0;
             $application->draft_data = $validated['draft_data'] ?? $request->all();
             $application->remarks = null;
@@ -296,7 +379,9 @@ class WaterApplicationController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Draf permohonan badan perairan berjaya disimpan.',
+                'message' => $application->application_status === LsankApplication::STATUS_FI_PEMPROSESAN
+                    ? 'Permohonan berjaya dikemaskini. Sila teruskan bayaran fi pemprosesan.'
+                    : 'Draf permohonan badan perairan berjaya disimpan.',
                 'data' => [
                     'id' => $application->application_id,
                     'application_id' => $application->application_id,
@@ -341,22 +426,13 @@ class WaterApplicationController extends Controller
 
         $statusId = $this->applicationStatusId('payment', 'Fi Pemprosesan', 2);
 
-        if (
-            empty($application->application_ref_no) ||
-            $application->application_ref_no === 'NULL' ||
-            str_starts_with($application->application_ref_no, 'DRAF-')
-        ) {
-            $application->application_ref_no = $this->generateApplicationFileNo(
-                $this->waterSectionCode($application->activity_name ?? null),
-                $this->districtCode($application->district ?? null)
-            );
-        }
-
         $application->application_status_id = $statusId;
         $application->application_status = LsankApplication::STATUS_FI_PEMPROSESAN;
         $application->payment_status = LsankApplication::PAYMENT_MENUNGGU_BAYARAN;
         $application->submitted_at = null;
         $application->save();
+
+        $fees = $this->calculateWaterFees($application);
 
         return response()->json([
             'success' => true,
@@ -364,9 +440,18 @@ class WaterApplicationController extends Controller
             'data' => [
                 'id' => $application->application_id,
                 'application_id' => $application->application_id,
+                'application_ids' => [$application->application_id],
+
                 'application_no' => $application->application_ref_no,
                 'application_ref_no' => $application->application_ref_no,
+
                 'invoice_id' => $application->application_id,
+                'invoice_ids' => [$application->application_id],
+                'invoice_no' => 'INVOIS-' . now()->format('Y') . '-' . str_pad($application->application_id, 4, '0', STR_PAD_LEFT) . '-01',
+
+                'processing_fee' => $fees['processing_fee'],
+                'processing_fee_display' => 'RM ' . number_format($fees['processing_fee'], 2),
+
                 'status' => $application->application_status,
                 'payment_status' => $application->payment_status,
             ],
@@ -398,38 +483,154 @@ class WaterApplicationController extends Controller
             ], 422);
         }
 
-        $statusId = $this->applicationStatusId('in_process', 'Dalam Proses', 3);
+        return DB::transaction(function () use ($application, $typeId) {
+            $statusId = $this->applicationStatusId('in_process', 'Dalam Proses', 3);
 
-        $application->application_status_id = $statusId;
-        $application->application_status = LsankApplication::STATUS_DALAM_PROSES;
-        $application->payment_status = LsankApplication::PAYMENT_SUDAH_BAYAR;
-        $application->submitted_at = now();
+            $draftData = is_array($application->draft_data)
+                ? $application->draft_data
+                : [];
 
-        $application->remarks = trim(
-            (($application->remarks ?? '') . "\nBayaran simulasi berjaya pada " . now()->format('d/m/Y H:i'))
-        );
+            $selectedActivities = $draftData['selected_activities'] ?? [];
 
-        $application->save();
+            if (!is_array($selectedActivities) || empty($selectedActivities)) {
+                $selectedActivities = [
+                    $application->activity_name
+                        ?? $application->activity_details
+                        ?? 'Aktiviti Rekreasi Sukan Air',
+                ];
+            }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Bayaran berjaya. Permohonan telah dihantar untuk semakan.',
-            'data' => [
-                'id' => $application->application_id,
-                'application_id' => $application->application_id,
-                'application_no' => $application->application_ref_no,
-                'application_ref_no' => $application->application_ref_no,
+            $selectedActivities = collect($selectedActivities)
+                ->map(fn ($item) => trim((string) $item))
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
 
-                'receipt_id' => $application->application_id,
-                'receipt_no' => 'RESIT-' . now()->format('Y') . '-' . str_pad($application->application_id, 4, '0', STR_PAD_LEFT),
+            $createdApplications = [];
+            $splitBatchId = 'WATER-BATCH-' . $application->application_id . '-' . now()->format('YmdHis');
 
-                'status' => $application->application_status,
-                'status_display' => 'Dalam Proses',
-                'payment_status' => $application->payment_status,
-                'payment_status_display' => 'Sudah Bayar',
-                'paid_at' => now()->toDateTimeString(),
-            ],
-        ]);
+            if (count($selectedActivities) <= 1) {
+                $activity = $selectedActivities[0] ?? $application->activity_name;
+
+                $application->activity_name = $activity;
+                $application->activity_type = $activity;
+                $application->activity_details = $activity;
+
+                $newDraftData = $this->waterDraftDataForActivity($draftData, $activity);
+                $newDraftData['selected_activities'] = [$activity];
+                $newDraftData['split_batch_id'] = $splitBatchId;
+                $newDraftData['is_split_child'] = true;
+                $newDraftData['split_from_application_id'] = $application->application_id;
+
+                $application->draft_data = $newDraftData;
+
+                $application->application_ref_no = $this->generateApplicationFileNo(
+                    $this->waterSectionCode($activity),
+                    $this->districtCode($application->district ?? null)
+                );
+
+                $application->application_status_id = $statusId;
+                $application->application_status = LsankApplication::STATUS_DALAM_PROSES;
+                $application->payment_status = LsankApplication::PAYMENT_SUDAH_BAYAR;
+                $application->submitted_at = now();
+
+                $application->remarks = trim(
+                    (($application->remarks ?? '') . "\nBayaran simulasi berjaya pada " . now()->format('d/m/Y H:i'))
+                );
+
+                $application->save();
+
+                $this->syncWaterBodyForActivity($application, $activity);
+
+                $createdApplications[] = $application;
+            } else {
+                foreach ($selectedActivities as $activity) {
+                    $newApplication = $application->replicate();
+
+                    $newApplication->application_ref_no = $this->generateApplicationFileNo(
+                        $this->waterSectionCode($activity),
+                        $this->districtCode($application->district ?? null)
+                    );
+
+                    $newApplication->application_status_id = $statusId;
+                    $newApplication->application_status = LsankApplication::STATUS_DALAM_PROSES;
+                    $newApplication->payment_status = LsankApplication::PAYMENT_SUDAH_BAYAR;
+                    $newApplication->submitted_at = now();
+
+                    $newApplication->activity_name = $activity;
+                    $newApplication->activity_type = $activity;
+                    $newApplication->activity_details = $activity;
+
+                    $newDraftData = $this->waterDraftDataForActivity($draftData, $activity);
+                    $newDraftData['selected_activities'] = [$activity];
+                    $newDraftData['split_batch_id'] = $splitBatchId;
+                    $newDraftData['is_split_child'] = true;
+                    $newDraftData['split_from_application_id'] = $application->application_id;
+
+                    $newApplication->draft_data = $newDraftData;
+                    $newApplication->current_step = $application->current_step ?? 0;
+
+                    $newApplication->remarks = trim(
+                        (($newApplication->remarks ?? '') . "\nBayaran simulasi berjaya pada " . now()->format('d/m/Y H:i'))
+                    );
+
+                    $newApplication->save();
+
+                    $this->syncWaterBodyForActivity($newApplication, $activity);
+
+                    $createdApplications[] = $newApplication;
+                }
+
+                $application->documents()->delete();
+                $application->waterBody()->delete();
+                $application->delete();
+            }
+
+            $firstApplication = $createdApplications[0];
+            $year = now()->format('Y');
+            $runningNo = str_pad($firstApplication->application_id, 4, '0', STR_PAD_LEFT);
+
+            return response()->json([
+                'success' => true,
+                'message' => count($createdApplications) > 1
+                    ? 'Bayaran berjaya. Permohonan telah dipecahkan mengikut jenis lesen dan dihantar untuk semakan.'
+                    : 'Bayaran berjaya. Permohonan telah dihantar untuk semakan.',
+                'data' => [
+                    'id' => $firstApplication->application_id,
+                    'application_id' => $firstApplication->application_id,
+                    'application_ids' => collect($createdApplications)
+                        ->pluck('application_id')
+                        ->values()
+                        ->all(),
+
+                    'application_no' => $firstApplication->application_ref_no,
+                    'application_ref_no' => $firstApplication->application_ref_no,
+
+                    'invoice_id' => $firstApplication->application_id,
+                    'invoice_ids' => collect($createdApplications)
+                        ->pluck('application_id')
+                        ->values()
+                        ->all(),
+                    'invoice_no' => 'INVOIS-' . $year . '-' . $runningNo . '-01',
+
+                    'receipt_id' => $firstApplication->application_id,
+                    'receipt_ids' => collect($createdApplications)
+                        ->pluck('application_id')
+                        ->values()
+                        ->all(),
+                    'receipt_no' => 'RESIT-' . $year . '-' . $runningNo . '-01',
+
+                    'split_batch_id' => $splitBatchId,
+
+                    'status' => LsankApplication::STATUS_DALAM_PROSES,
+                    'status_display' => 'Dalam Proses',
+                    'payment_status' => LsankApplication::PAYMENT_SUDAH_BAYAR,
+                    'payment_status_display' => 'Sudah Bayar',
+                    'paid_at' => now()->toDateTimeString(),
+                ],
+            ]);
+        });
     }
 
     public function store(Request $request)
@@ -714,6 +915,309 @@ class WaterApplicationController extends Controller
         });
     }
 
+    private function waterDraftDataForActivity(array $draftData, string $activity): array
+    {
+        $draftData['selected_activities'] = [$activity];
+
+        if ($activity !== 'Aktiviti Rekreasi Sukan Air') {
+            $draftData['recreation_details'] = [];
+        }
+
+        if ($activity !== 'Aktiviti Vesel Rekreasi') {
+            $draftData['vessel_details'] = [];
+            $draftData['vessel_types_by_index'] = [];
+        }
+
+        if ($activity !== 'Aktiviti Sangkar') {
+            $draftData['cage_details'] = [];
+        }
+
+        if ($activity !== 'Aktiviti Binaan') {
+            $draftData['construction_details'] = [];
+        }
+
+        return $draftData;
+    }
+
+    private function syncWaterBodyForActivity(LsankApplication $application, string $activity): void
+    {
+        $waterBody = LsankWaterBodyApplication::where(
+            'application_id',
+            $application->application_id
+        )->first();
+
+        if (!$waterBody) {
+            $waterBody = new LsankWaterBodyApplication();
+            $waterBody->application_id = $application->application_id;
+        }
+
+        $waterBody->activity_type_id = $application->activity_type_id;
+        $waterBody->activity_location = $application->activity_location;
+        $waterBody->longitude = $application->longitude;
+        $waterBody->latitude = $application->latitude;
+        $waterBody->operating_days = $application->operating_days;
+        $waterBody->operating_time = $application->operating_time;
+        $waterBody->motorized_fee = 0;
+        $waterBody->non_motorized_fee = 0;
+        $waterBody->activity_details = $activity;
+        $waterBody->save();
+    }
+
+    private function calculateWaterFees(LsankApplication $application): array
+    {
+        $draftData = is_array($application->draft_data)
+            ? $application->draft_data
+            : [];
+
+        $isOneOff = ($draftData['is_one_off'] ?? false) === true;
+
+        $selectedActivities = $draftData['selected_activities'] ?? [];
+
+        if (!is_array($selectedActivities)) {
+            $selectedActivities = [];
+        }
+
+        $licenseDurationYear = (int) ($draftData['license_duration_year'] ?? 1);
+
+        if ($licenseDurationYear < 1) {
+            $licenseDurationYear = 1;
+        }
+
+        $hasRecreation = in_array('Aktiviti Rekreasi Sukan Air', $selectedActivities, true);
+        $hasVessel = in_array('Aktiviti Vesel Rekreasi', $selectedActivities, true);
+        $hasCage = in_array('Aktiviti Sangkar', $selectedActivities, true);
+        $hasConstruction = in_array('Aktiviti Binaan', $selectedActivities, true);
+
+        $licenseActivityCount = 0;
+
+        if ($hasRecreation) {
+            $licenseActivityCount++;
+        }
+
+        if ($hasVessel) {
+            $licenseActivityCount++;
+        }
+
+        if ($hasCage) {
+            $licenseActivityCount++;
+        }
+
+        if ($hasConstruction) {
+            $licenseActivityCount++;
+        }
+
+        if ($licenseActivityCount < 1) {
+            $licenseActivityCount = 1;
+        }
+
+        $processingFee = 150 * $licenseActivityCount;
+        $securityFee = 0;
+        $licenseFee = 0;
+        $chargeFee = 0;
+        $chargeItems = [];
+
+        $constructionType = '';
+        $mooringCount = 0;
+
+        if ($isOneOff) {
+            if ($hasConstruction) {
+                $securityFee += 1000;
+            }
+        } else {
+            if ($hasRecreation) {
+                $securityFee += 1000;
+            }
+
+            if ($hasVessel) {
+                $securityFee += 1000;
+            }
+
+            if ($hasCage) {
+                $securityFee += 1000;
+            }
+
+            if ($hasConstruction) {
+                $securityFee += 1000;
+            }
+        }
+
+        if ($isOneOff) {
+            $licenseFee = 250 * $licenseActivityCount;
+        } else {
+            $licenseFee = 500 * $licenseDurationYear * $licenseActivityCount;
+        }
+
+        if ($hasRecreation) {
+            $recreationDetails = $draftData['recreation_details'] ?? [];
+
+            if (is_array($recreationDetails)) {
+                foreach ($recreationDetails as $item) {
+                    if (!is_array($item)) {
+                        continue;
+                    }
+
+                    $activity = trim((string) ($item['activity'] ?? 'Aktiviti Rekreasi'));
+                    $type = trim((string) ($item['type'] ?? ''));
+                    $quantity = (int) ($item['quantity'] ?? 0);
+
+                    if ($quantity < 1 || $type === '') {
+                        continue;
+                    }
+
+                    $isNonMotor = str_contains(strtolower($type), 'tidak');
+                    $rate = $isNonMotor ? 10 : 50;
+                    $amount = $rate * $quantity;
+
+                    $chargeFee += $amount;
+
+                    $chargeItems[] = [
+                        'title' => 'Aktiviti Rekreasi Sukan Air - ' . $activity,
+                        'description' => $isNonMotor
+                            ? 'Tidak bermotor: RM10.00 x ' . $quantity . ' unit setahun'
+                            : 'Bermotor: RM50.00 x ' . $quantity . ' unit setahun',
+                        'amount' => $amount,
+                        'amount_display' => 'RM ' . number_format($amount, 2),
+                    ];
+                }
+            }
+        }
+
+        if ($hasVessel) {
+            $vesselDetails = $draftData['vessel_details'] ?? [];
+
+            if (is_array($vesselDetails)) {
+                foreach ($vesselDetails as $item) {
+                    if (!is_array($item)) {
+                        continue;
+                    }
+
+                    $type = trim((string) ($item['type'] ?? 'Vesel'));
+                    $passengerCount = (int) ($item['passenger_count'] ?? 0);
+
+                    if ($type === '') {
+                        continue;
+                    }
+
+                    $isTenderBoat = str_contains(strtolower($type), 'tender');
+
+                    if ($isTenderBoat) {
+                        $amount = 100;
+                        $chargeFee += $amount;
+
+                        $chargeItems[] = [
+                            'title' => 'Aktiviti Vesel Rekreasi - ' . $type,
+                            'description' => 'Tambatan vesel: RM100.00 per unit',
+                            'amount' => $amount,
+                            'amount_display' => 'RM ' . number_format($amount, 2),
+                        ];
+
+                        continue;
+                    }
+
+                    if ($passengerCount < 1) {
+                        continue;
+                    }
+
+                    $amount = $passengerCount <= 12 ? 100 : 200;
+                    $chargeFee += $amount;
+
+                    $chargeItems[] = [
+                        'title' => 'Aktiviti Vesel Rekreasi - ' . $type,
+                        'description' => $passengerCount <= 12
+                            ? 'Bermotor penumpang tidak melebihi 12 orang: RM100.00 seunit setahun'
+                            : 'Bermotor penumpang melebihi 12 orang dan ke atas: RM200.00 seunit setahun',
+                        'amount' => $amount,
+                        'amount_display' => 'RM ' . number_format($amount, 2),
+                    ];
+                }
+            }
+        }
+
+        if ($hasCage) {
+            $cageDetails = $draftData['cage_details'] ?? [];
+            $area = 0;
+
+            if (is_array($cageDetails)) {
+                $area = (float) ($cageDetails['cage_area'] ?? 0);
+            }
+
+            if ($area > 0 && $area <= 200) {
+                $chargeItems[] = [
+                    'title' => 'Aktiviti Sangkar',
+                    'description' => 'Keluasan kurang daripada 200 meter persegi: Dikecualikan',
+                    'amount' => 0,
+                    'amount_display' => 'RM 0.00',
+                ];
+            }
+
+            if ($area > 200) {
+                $amount = $area * 1;
+                $chargeFee += $amount;
+
+                $chargeItems[] = [
+                    'title' => 'Aktiviti Sangkar',
+                    'description' => 'Keluasan melebihi 200 meter persegi: RM1.00 x ' . number_format($area, 0) . ' meter persegi',
+                    'amount' => $amount,
+                    'amount_display' => 'RM ' . number_format($amount, 2),
+                ];
+            }
+        }
+
+        if ($hasConstruction) {
+            $constructionDetails = $draftData['construction_details'] ?? [];
+            $area = 0;
+
+            if (is_array($constructionDetails)) {
+                $area = (float) ($constructionDetails['construction_area'] ?? 0);
+                $constructionType = strtolower(trim((string) ($constructionDetails['construction_type'] ?? '')));
+                $mooringCount = (int) ($constructionDetails['mooring_count'] ?? 0);
+            }
+
+            if ($area > 0) {
+                if ($area <= 200) {
+                    $amount = 200;
+                    $description = 'Apa-apa jenis binaan: RM1.00 per meter persegi pertama tertakluk kepada kadar minimum RM200.00';
+                } else {
+                    $amount = 200 + (($area - 200) * 2);
+                    $description = 'Apa-apa jenis binaan: 200 meter persegi pertama minimum RM200.00 + baki ' . number_format($area - 200, 0) . ' meter persegi x RM2.00';
+                }
+
+                $chargeFee += $amount;
+
+                $chargeItems[] = [
+                    'title' => 'Aktiviti Binaan',
+                    'description' => $description,
+                    'amount' => $amount,
+                    'amount_display' => 'RM ' . number_format($amount, 2),
+                ];
+            }
+
+            if ($constructionType === 'jeti' && $mooringCount > 0) {
+                $amount = $mooringCount * 100;
+                $chargeFee += $amount;
+
+                $chargeItems[] = [
+                    'title' => 'Tambatan Vesel',
+                    'description' => 'Tambatan vesel: RM100.00 x ' . $mooringCount . ' unit',
+                    'amount' => $amount,
+                    'amount_display' => 'RM ' . number_format($amount, 2),
+                ];
+            }
+        }
+
+        return [
+            'processing_fee' => $processingFee,
+            'security_fee' => $securityFee,
+            'license_fee' => $licenseFee,
+            'charge_fee' => $chargeFee,
+            'charge_items' => $chargeItems,
+            'is_one_off' => $isOneOff,
+            'license_duration_year' => $licenseDurationYear,
+            'license_activity_count' => $licenseActivityCount,
+            'total_after_approval' => $securityFee + $licenseFee + $chargeFee,
+        ];
+    }
+
     private function displayApplicationStatus(?string $status): string
     {
         return match ($status) {
@@ -736,8 +1240,15 @@ class WaterApplicationController extends Controller
         };
     }
 
-    private function generateDraftReferenceNo(): string
+    private function generateDraftReferenceNo(int $userId): string
     {
-        return 'NULL';
+        do {
+            $refNo = 'DRAF-' . $userId . '-' . now()->format('YmdHis');
+        } while (
+            LsankApplication::where('application_ref_no', $refNo)->exists()
+        );
+
+        return $refNo;
     }
+
 }

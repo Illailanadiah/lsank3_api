@@ -74,6 +74,7 @@ class LsankApplication extends Model
         'operating_time',
         'activity_details',
         'recreation_details',
+        'construction_shape',
     ];
 
     protected $casts = [

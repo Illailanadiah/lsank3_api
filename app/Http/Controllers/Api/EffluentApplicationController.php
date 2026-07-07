@@ -306,6 +306,15 @@ class EffluentApplicationController extends Controller
             abort(403, 'Anda tidak dibenarkan melihat permohonan ini.');
         }
 
+        $typeId = $this->applicationTypeId(self::TYPE_CODE, self::TYPE_NAME);
+
+        if ((int) $application->application_type_id !== (int) $typeId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Permohonan efluen tidak dijumpai.',
+            ], 404);
+        }
+
         $application->load([
             'user',
             'applicant.company.officers',
@@ -316,12 +325,81 @@ class EffluentApplicationController extends Controller
             'reviews',
         ]);
 
+        $detail = $this->formatApplicationDetail(
+            $application,
+            self::TYPE_NAME
+        );
+
+        $detail['id'] = $application->application_id;
+        $detail['application_id'] = $application->application_id;
+        $detail['application_no'] = $application->application_ref_no;
+        $detail['application_ref_no'] = $application->application_ref_no;
+
+        $detail['current_step'] = $application->current_step ?? 0;
+        $detail['draft_data'] = $application->draft_data ?? [];
+
+        $detail['applicant_type'] = $application->applicant_type;
+        $detail['applicant_name'] = $application->applicant_name;
+        $detail['identity_no'] = $application->identity_no;
+        $detail['email'] = $application->email;
+        $detail['phone_no'] = $application->phone_no;
+        $detail['phone'] = $application->phone;
+        $detail['address'] = $application->address;
+
+        $detail['company_name'] = $application->company_name;
+        $detail['business_name'] = $application->business_name;
+        $detail['registration_no'] = $application->registration_no;
+        $detail['business_address'] = $application->business_address;
+        $detail['business_phone'] = $application->business_phone;
+        $detail['business_email'] = $application->business_email;
+
+        $detail['responsible_officer_name'] = $application->responsible_officer_name;
+        $detail['responsible_officer_phone'] = $application->responsible_officer_phone;
+        $detail['responsible_officer_position'] = $application->responsible_officer_position;
+        $detail['officers'] = $application->officers ?? [];
+
+        $detail['activity_name'] = $application->activity_name;
+        $detail['activity_details'] = $application->activity_details;
+        $detail['district'] = $application->district;
+        $detail['activity_location'] = $application->activity_location;
+        $detail['longitude'] = $application->longitude;
+        $detail['latitude'] = $application->latitude;
+
+        $detail['service_type_id'] = optional($application->effluent)->service_type_id;
+        $detail['service_name'] = optional(optional($application->effluent)->serviceType)->service_name;
+        $detail['service_code'] = optional(optional($application->effluent)->serviceType)->service_code;
+
+        $detail['composition'] = optional($application->effluent)->composition;
+        $detail['frequency'] = optional($application->effluent)->frequency;
+        $detail['flow_rate'] = optional($application->effluent)->flow_rate;
+        $detail['sampling_method'] = optional($application->effluent)->sampling_method;
+        $detail['contingency_plan'] = optional($application->effluent)->contingency_plan;
+        $detail['disposal_method'] = optional($application->effluent)->disposal_method;
+
+        $invoiceItems = LsankInvoice::where('application_id', $application->application_id)
+            ->latest('invoice_id')
+            ->get()
+            ->map(function ($invoice) {
+                return [
+                    'invoice_id' => $invoice->invoice_id,
+                    'invoice_no' => $invoice->invoice_no,
+                    'payment_type' => 'Fi Pemprosesan',
+                    'amount' => (float) $invoice->total_amount,
+                    'amount_display' => 'RM ' . number_format($invoice->total_amount, 2),
+                    'invoice_date' => optional($invoice->invoice_date)->format('d/m/Y') ?? '-',
+                    'due_date' => optional($invoice->due_date)->format('d/m/Y') ?? '-',
+                    'status' => $invoice->status,
+                    'paid' => $invoice->status === 'paid',
+                ];
+            })
+            ->values()
+            ->all();
+
+        $detail['invoice_items'] = $invoiceItems;
+
         return response()->json([
             'success' => true,
-            'data' => $this->formatApplicationDetail(
-                $application,
-                self::TYPE_NAME
-            ),
+            'data' => $detail,
         ]);
     }
 

@@ -512,6 +512,8 @@ class WaterApplicationController extends Controller
 
                 $newDraftData = $this->waterDraftDataForActivity($draftData, $activity);
                 $newDraftData['selected_activities'] = [$activity];
+                $newDraftData['processing_invoice_activities'] = $selectedActivities;
+                $newDraftData['original_selected_activities'] = $selectedActivities;
                 $newDraftData['split_batch_id'] = $splitBatchId;
                 $newDraftData['is_split_child'] = true;
                 $newDraftData['split_from_application_id'] = $application->application_id;
@@ -557,6 +559,8 @@ class WaterApplicationController extends Controller
 
                     $newDraftData = $this->waterDraftDataForActivity($draftData, $activity);
                     $newDraftData['selected_activities'] = [$activity];
+                    $newDraftData['processing_invoice_activities'] = $selectedActivities;
+                    $newDraftData['original_selected_activities'] = $selectedActivities;
                     $newDraftData['split_batch_id'] = $splitBatchId;
                     $newDraftData['is_split_child'] = true;
                     $newDraftData['split_from_application_id'] = $application->application_id;
@@ -601,6 +605,7 @@ class WaterApplicationController extends Controller
                 'data' => [
                     'id' => $firstApplication->application_id,
                     'application_id' => $firstApplication->application_id,
+
                     'application_ids' => collect($createdApplications)
                         ->pluck('application_id')
                         ->values()
@@ -608,6 +613,21 @@ class WaterApplicationController extends Controller
 
                     'application_no' => $firstApplication->application_ref_no,
                     'application_ref_no' => $firstApplication->application_ref_no,
+
+                    'application_nos' => collect($createdApplications)
+                        ->pluck('application_ref_no')
+                        ->values()
+                        ->all(),
+
+                    'application_ref_nos' => collect($createdApplications)
+                        ->pluck('application_ref_no')
+                        ->values()
+                        ->all(),
+
+                    'activity_names' => collect($createdApplications)
+                        ->pluck('activity_name')
+                        ->values()
+                        ->all(),
 
                     'invoice_id' => $processingInvoice?->invoice_id ?? $firstApplication->application_id,
                     'invoice_ids' => [
@@ -867,6 +887,26 @@ class WaterApplicationController extends Controller
         $detail['operating_time'] = $application->operating_time;
         $detail['recreation_details'] = $application->recreation_details ?? [];
 
+        $invoiceItems = LsankInvoice::where('application_id', $application->application_id)
+            ->latest('invoice_id')
+            ->get()
+            ->map(function ($invoice) {
+                return [
+                    'invoice_id' => $invoice->invoice_id,
+                    'invoice_no' => $invoice->invoice_no,
+                    'payment_type' => 'Fi Pemprosesan',
+                    'amount' => (float) $invoice->total_amount,
+                    'amount_display' => 'RM ' . number_format($invoice->total_amount, 2),
+                    'invoice_date' => optional($invoice->invoice_date)->format('d/m/Y') ?? '-',
+                    'status' => $invoice->status,
+                    'paid' => $invoice->status === 'paid',
+                ];
+            })
+            ->values()
+            ->all();
+
+        $detail['invoice_items'] = $invoiceItems;
+
         return response()->json([
             'success' => true,
             'data' => $detail,
@@ -1110,12 +1150,12 @@ class WaterApplicationController extends Controller
                     $isTenderBoat = str_contains(strtolower($type), 'tender');
 
                     if ($isTenderBoat) {
-                        $amount = 100;
+                        $amount = 10;
                         $chargeFee += $amount;
 
                         $chargeItems[] = [
                             'title' => 'Aktiviti Vesel Rekreasi - ' . $type,
-                            'description' => 'Tambatan vesel: RM100.00 per unit',
+                            'description' => 'Tender Boat: RM10.00 per tender',
                             'amount' => $amount,
                             'amount_display' => 'RM ' . number_format($amount, 2),
                         ];

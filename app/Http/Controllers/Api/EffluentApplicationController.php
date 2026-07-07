@@ -47,9 +47,21 @@ class EffluentApplicationController extends Controller
 
     public function store(Request $request)
     {
+        return $this->saveDraft($request);
+    }
+
+    public function saveStep(Request $request)
+    {
+        return $this->saveDraft($request);
+    }
+
+    public function saveDraft(Request $request)
+    {
         $validated = $request->validate([
+            'application_id' => ['nullable', 'integer', 'exists:lsank_applications,application_id'],
+
             'applicant_type' => ['nullable', 'string', 'max:100'],
-            'applicant_name' => ['required', 'string', 'max:255'],
+            'applicant_name' => ['nullable', 'string', 'max:255'],
             'identity_no' => ['nullable', 'string', 'max:50'],
             'email' => ['nullable', 'email', 'max:255'],
             'phone_no' => ['nullable', 'string', 'max:30'],
@@ -61,21 +73,13 @@ class EffluentApplicationController extends Controller
             'business_address' => ['nullable', 'string'],
             'business_phone' => ['nullable', 'string', 'max:30'],
             'business_email' => ['nullable', 'email', 'max:255'],
+
             'responsible_officer_name' => ['nullable', 'string', 'max:255'],
             'responsible_officer_phone' => ['nullable', 'string', 'max:30'],
             'responsible_officer_position' => ['nullable', 'string', 'max:255'],
 
-            'officers' => ['nullable', 'array'],
-            'officers.*.name' => ['required_with:officers', 'string', 'max:255'],
-            'officers.*.phone' => ['required_with:officers', 'string', 'max:30'],
-            'officers.*.position' => ['required_with:officers', 'string', 'max:255'],
-
-            'service_type_id' => [
-                'required',
-                'integer',
-                'exists:lsank_service_types,service_type_id',
-            ],
-            'district' => ['required', 'string', 'max:100'],
+            'service_type_id' => ['nullable', 'integer', 'exists:lsank_service_types,service_type_id'],
+            'district' => ['nullable', 'string', 'max:100'],
             'activity_location' => ['nullable', 'string'],
             'longitude' => ['nullable', 'numeric'],
             'latitude' => ['nullable', 'numeric'],
@@ -89,117 +93,111 @@ class EffluentApplicationController extends Controller
 
         $user = $request->user();
         $typeId = $this->applicationTypeId(self::TYPE_CODE, self::TYPE_NAME);
-        $statusId = $this->applicationStatusId('submitted', 'Dihantar', 2);
+        $statusId = $this->applicationStatusId('draft', 'Draf', 1);
         $phoneColumn = $this->applicantPhoneColumn();
 
-        $serviceType = LsankServiceType::findOrFail(
-            $validated['service_type_id']
-        );
+        return DB::transaction(function () use ($validated, $user, $typeId, $statusId, $phoneColumn) {
+            $application = null;
 
-        return DB::transaction(function () use (
-            $validated,
-            $user,
-            $typeId,
-            $statusId,
-            $phoneColumn,
-            $serviceType
-        ) {
-            $applicantData = [
-                'user_id' => $user->user_id,
-                'applicant_type' => $this->normalizeApplicantType(
-                    $validated['applicant_type'] ?? null
-                ),
-                'applicant_name' => $validated['applicant_name'],
-                'identity_no' => $validated['identity_no'] ?? null,
-                'email' => $validated['email'] ?? null,
-                'address' => $validated['address'] ?? null,
-                'status' => 'active',
-            ];
+            if (!empty($validated['application_id'])) {
+                $application = LsankApplication::where('application_id', $validated['application_id'])
+                    ->where('user_id', $user->user_id)
+                    ->first();
+            }
 
-            $applicantData[$phoneColumn] =
-                $validated['phone_no'] ?? $validated['phone'] ?? null;
-
-            $applicant = LsankApplicant::create($applicantData);
-
-            if (!empty($validated['company_name'])) {
-                $company = LsankCompany::create([
-                    'applicant_id' => $applicant->applicant_id,
-                    'company_name' => $validated['company_name'],
-                    'registration_no' => $validated['registration_no'] ?? null,
-                    'business_address' => $validated['business_address'] ?? null,
-                    'business_phone' => $validated['business_phone'] ?? null,
-                    'business_email' => $validated['business_email'] ?? null,
-                    'responsible_officer_name' =>
-                        $validated['responsible_officer_name'] ?? null,
-                    'responsible_officer_phone' =>
-                        $validated['responsible_officer_phone'] ?? null,
+            if (!$application) {
+                $applicant = LsankApplicant::create([
+                    'user_id' => $user->user_id,
+                    'applicant_type' => $this->normalizeApplicantType($validated['applicant_type'] ?? null),
+                    'applicant_name' => $validated['applicant_name'] ?? $user->name ?? '-',
+                    'identity_no' => $validated['identity_no'] ?? null,
+                    'email' => $validated['email'] ?? $user->email ?? null,
+                    'address' => $validated['address'] ?? null,
+                    $phoneColumn => $validated['phone_no'] ?? $validated['phone'] ?? null,
+                    'status' => 'active',
                 ]);
 
-                $officers = $validated['officers'] ?? [];
+                $application = LsankApplication::create([
+                    'application_ref_no' => 'DRAFT-EFF-' . now()->format('YmdHis'),
+                    'user_id' => $user->user_id,
+                    'applicant_id' => $applicant->applicant_id,
+                    'application_type_id' => $typeId,
+                    'application_status_id' => $statusId,
+                    'application_category' => 'new',
+                    'submitted_at' => null,
+                    'remarks' => null,
+                ]);
+            } else {
+                $applicant = $application->applicant;
 
-                if (empty($officers) && !empty($validated['responsible_officer_name'])) {
-                    $officers[] = [
-                        'name' => $validated['responsible_officer_name'],
-                        'phone' => $validated['responsible_officer_phone'] ?? '',
-                        'position' => $validated['responsible_officer_position'] ?? null,
-                    ];
-                }
-
-                foreach ($officers as $officer) {
-                    if (empty($officer['name'])) {
-                        continue;
-                    }
-
-                    LsankCompanyOfficer::create([
-                        'company_id' => $company->company_id,
-                        'officer_name' => $officer['name'],
-                        'officer_phone' => $officer['phone'] ?? '',
-                        'officer_position' => $officer['position'] ?? null,
+                if ($applicant) {
+                    $applicant->update([
+                        'applicant_type' => $this->normalizeApplicantType($validated['applicant_type'] ?? $applicant->applicant_type),
+                        'applicant_name' => $validated['applicant_name'] ?? $applicant->applicant_name,
+                        'identity_no' => $validated['identity_no'] ?? $applicant->identity_no,
+                        'email' => $validated['email'] ?? $applicant->email,
+                        'address' => $validated['address'] ?? $applicant->address,
+                        $phoneColumn => $validated['phone_no'] ?? $validated['phone'] ?? $applicant->{$phoneColumn},
                     ]);
                 }
             }
 
-            $application = LsankApplication::create([
-                'application_ref_no' => $this->generateApplicationFileNo(
-                    $serviceType->service_code,
-                    $this->districtCode($validated['district'] ?? null)
-                ),
-                'user_id' => $user->user_id,
-                'applicant_id' => $applicant->applicant_id,
-                'application_type_id' => $typeId,
-                'application_status_id' => $statusId,
-                'application_category' => 'new',
-                'submitted_at' => now(),
-                'remarks' => null,
-            ]);
+            if (!empty($validated['company_name'])) {
+                $company = LsankCompany::updateOrCreate(
+                    ['applicant_id' => $application->applicant_id],
+                    [
+                        'company_name' => $validated['company_name'],
+                        'registration_no' => $validated['registration_no'] ?? null,
+                        'business_address' => $validated['business_address'] ?? null,
+                        'business_phone' => $validated['business_phone'] ?? null,
+                        'business_email' => $validated['business_email'] ?? null,
+                        'responsible_officer_name' => $validated['responsible_officer_name'] ?? null,
+                        'responsible_officer_phone' => $validated['responsible_officer_phone'] ?? null,
+                    ]
+                );
 
-            LsankEffluentApplication::create([
-                'application_id' => $application->application_id,
-                'service_type_id' => $validated['service_type_id'],
-                'activity_location' => $validated['activity_location'] ?? null,
-                'longitude' => $validated['longitude'] ?? null,
-                'latitude' => $validated['latitude'] ?? null,
-                'composition' => $validated['composition'] ?? null,
-                'frequency' => $validated['frequency'] ?? null,
-                'flow_rate' => $validated['flow_rate'] ?? null,
-                'sampling_method' => $validated['sampling_method'] ?? null,
-                'contingency_plan' => $validated['contingency_plan'] ?? null,
-                'disposal_method' => $validated['disposal_method'] ?? null,
+                if (!empty($validated['responsible_officer_name'])) {
+                    LsankCompanyOfficer::updateOrCreate(
+                        [
+                            'company_id' => $company->company_id,
+                            'officer_name' => $validated['responsible_officer_name'],
+                        ],
+                        [
+                            'officer_phone' => $validated['responsible_officer_phone'] ?? '',
+                            'officer_position' => $validated['responsible_officer_position'] ?? null,
+                        ]
+                    );
+                }
+            }
+
+            LsankEffluentApplication::updateOrCreate(
+                ['application_id' => $application->application_id],
+                [
+                    'service_type_id' => $validated['service_type_id'] ?? null,
+                    'activity_location' => $validated['activity_location'] ?? null,
+                    'longitude' => $validated['longitude'] ?? null,
+                    'latitude' => $validated['latitude'] ?? null,
+                    'composition' => $validated['composition'] ?? null,
+                    'frequency' => $validated['frequency'] ?? null,
+                    'flow_rate' => $validated['flow_rate'] ?? null,
+                    'sampling_method' => $validated['sampling_method'] ?? null,
+                    'contingency_plan' => $validated['contingency_plan'] ?? null,
+                    'disposal_method' => $validated['disposal_method'] ?? null,
+                ]
+            );
+
+            $application->load([
+                'applicant.company.officers',
+                'status',
+                'type',
+                'effluent.serviceType',
             ]);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Permohonan pelepasan efluen berjaya dihantar.',
-                'data' => [
-                    'id' => $application->application_id,
-                    'application_id' => $application->application_id,
-                    'application_no' => $application->application_ref_no,
-                    'application_ref_no' => $application->application_ref_no,
-                    'service_type_id' => $serviceType->service_type_id,
-                    'service_name' => $serviceType->service_name,
-                    'service_code' => $serviceType->service_code,
-                ],
-            ], 201);
+                'message' => 'Draf permohonan efluen berjaya disimpan.',
+                'data' => $this->formatApplicationDetail($application, self::TYPE_NAME),
+            ]);
         });
     }
 

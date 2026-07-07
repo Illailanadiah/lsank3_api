@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\LsankApplication;
+use App\Models\LsankInvoice;
 use Illuminate\Http\Request;
 
 class ApplicationController extends Controller
@@ -102,6 +103,7 @@ class ApplicationController extends Controller
     {
         return $this->applicationBaseQuery()
             ->whereIn('application_status', [
+                LsankApplication::STATUS_FI_PEMPROSESAN,
                 LsankApplication::STATUS_DALAM_PROSES,
                 LsankApplication::STATUS_LULUS,
                 LsankApplication::STATUS_GAGAL,
@@ -396,11 +398,84 @@ class ApplicationController extends Controller
             return [];
         }
 
+        $draftData = is_array($application->draft_data)
+            ? $application->draft_data
+            : [];
+
+        $splitBatchId = $draftData['split_batch_id'] ?? null;
+
+        $applicationRefNos = [$application->application_ref_no];
+
+        if ($splitBatchId) {
+            $applicationRefNos = LsankApplication::where('user_id', $application->user_id)
+                ->where('application_type_id', $application->application_type_id)
+                ->where('application_status', LsankApplication::STATUS_DALAM_PROSES)
+                ->where('draft_data->split_batch_id', $splitBatchId)
+                ->orderBy('application_id')
+                ->pluck('application_ref_no')
+                ->filter()
+                ->values()
+                ->all();
+        }
+
+        $processingInvoiceActivities =
+            $draftData['processing_invoice_activities']
+            ?? $draftData['original_selected_activities']
+            ?? $draftData['selected_activities']
+            ?? [$application->activity_name ?? $application->activity_details ?? '-'];
+
+        $invoiceItems = LsankInvoice::where('application_id', $application->application_id)
+            ->latest('invoice_id')
+            ->get()
+            ->map(function ($invoice) {
+                return [
+                    'invoice_id' => $invoice->invoice_id,
+                    'invoice_no' => $invoice->invoice_no,
+                    'payment_type' => 'Fi Pemprosesan',
+                    'amount' => (float) $invoice->total_amount,
+                    'amount_display' => 'RM ' . number_format($invoice->total_amount, 2),
+                    'invoice_date' => optional($invoice->invoice_date)->format('d/m/Y') ?? '-',
+                    'due_date' => optional($invoice->due_date)->format('d/m/Y') ?? '-',
+                    'status' => $invoice->status,
+                    'paid' => $invoice->status === 'paid',
+                ];
+            })
+            ->values()
+            ->all();
+
+        $year = optional($application->created_at)->format('Y') ?? now()->format('Y');
+        $runningNo = str_pad($application->application_id, 4, '0', STR_PAD_LEFT);
+
+        $receiptItems = [];
+
+        if (
+            in_array($application->application_status, [
+                LsankApplication::STATUS_DALAM_PROSES,
+                LsankApplication::STATUS_LULUS,
+                LsankApplication::STATUS_GAGAL,
+            ], true) ||
+            $application->payment_status === LsankApplication::PAYMENT_SUDAH_BAYAR
+        ) {
+            $receiptItems[] = [
+                'receipt_id' => $application->application_id,
+                'receipt_no' => 'RESIT-' . $year . '-' . $runningNo . '-01',
+                'payment_type' => 'Fi Pemprosesan',
+                'amount' => 150,
+                'amount_display' => 'RM 150.00',
+                'paid_date' => optional($application->updated_at)->format('d/m/Y') ?? '-',
+                'paid' => true,
+            ];
+        }
+
         return [
             'id' => $application->application_id,
             'application_id' => $application->application_id,
             'application_no' => $application->application_ref_no,
             'application_ref_no' => $application->application_ref_no,
+
+            'application_ref_nos' => $applicationRefNos,
+            'application_nos' => $applicationRefNos,
+            'processing_invoice_activities' => $processingInvoiceActivities,
 
             'user_id' => $application->user_id,
             'applicant_id' => $application->applicant_id,
@@ -473,6 +548,9 @@ class ApplicationController extends Controller
 
             'created_at' => optional($application->created_at)->toDateTimeString(),
             'updated_at' => optional($application->updated_at)->toDateTimeString(),
+
+            'invoice_items' => $invoiceItems,
+            'receipt_items' => $receiptItems,
         ];
     }
 

@@ -20,7 +20,13 @@ class LsankWaterBodyApplication extends Model
         'motorized_fee',
         'non_motorized_fee',
         'activity_details',
+        'draft_data',
+
     ];
+
+    protected $casts = [
+    'draft_data' => 'array',
+];
 
     public function application()
     {

@@ -101,6 +101,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/', [EffluentApplicationController::class, 'index']);
         Route::post('/', [EffluentApplicationController::class, 'store']);
         Route::post('/save-step', [EffluentApplicationController::class, 'saveStep']);
+        Route::post('/save-draft', [EffluentApplicationController::class, 'saveDraft']);
+        Route::post('/{application}/generate-invoice', [EffluentApplicationController::class, 'generateInvoice']);
+        Route::post('/{application}/pay', [EffluentApplicationController::class, 'pay']);
+        Route::delete('/{application}/draft', [EffluentApplicationController::class, 'destroyDraft']);
         Route::get('/{application}', [EffluentApplicationController::class, 'show']);
         Route::post('/{application}/submit', [EffluentApplicationController::class, 'submit']);
     });

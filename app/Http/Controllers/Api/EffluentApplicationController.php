@@ -119,7 +119,7 @@ class EffluentApplicationController extends Controller
                 ]);
 
                 $application = LsankApplication::create([
-                    'application_ref_no' => 'DRAFT-EFF-' . now()->format('YmdHis'),
+                    'application_ref_no' => $this->generateDraftReferenceNo($user->user_id),
                     'user_id' => $user->user_id,
                     'applicant_id' => $applicant->applicant_id,
 
@@ -505,4 +505,37 @@ public function destroyDraft(Request $request, LsankApplication $application)
             ]
         );
     }
+
+    private function generateDraftReferenceNo(int $userId): string
+{
+    do {
+        $refNo = 'DRAF-EFF-' . $userId . '-' . now()->format('YmdHis');
+    } while (
+        LsankApplication::where('application_ref_no', $refNo)->exists()
+    );
+
+    return $refNo;
+}
+
+private function displayApplicationStatus(?string $status): string
+{
+    return match ($status) {
+        LsankApplication::STATUS_DRAF => 'Draf',
+        LsankApplication::STATUS_FI_PEMPROSESAN => 'Fi Pemprosesan',
+        LsankApplication::STATUS_DALAM_PROSES => 'Dalam Proses',
+        LsankApplication::STATUS_LULUS => 'Lulus',
+        LsankApplication::STATUS_GAGAL => 'Gagal',
+        default => 'Draf',
+    };
+}
+
+private function displayPaymentStatus(?string $status): string
+{
+    return match ($status) {
+        LsankApplication::PAYMENT_BELUM_BAYAR => 'Belum Bayar',
+        LsankApplication::PAYMENT_MENUNGGU_BAYARAN => 'Menunggu Bayaran',
+        LsankApplication::PAYMENT_SUDAH_BAYAR => 'Sudah Bayar',
+        default => $status ?? 'Belum Bayar',
+    };
+}
 }

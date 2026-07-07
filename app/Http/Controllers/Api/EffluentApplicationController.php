@@ -121,9 +121,42 @@ class EffluentApplicationController extends Controller
                     'application_ref_no' => 'DRAFT-EFF-' . now()->format('YmdHis'),
                     'user_id' => $user->user_id,
                     'applicant_id' => $applicant->applicant_id,
+
+                    'applicant_name' => $validated['applicant_name'] ?? $user->name ?? '-',
+                    'business_name' => $validated['company_name'] ?? null,
+                    'phone' => $validated['phone_no'] ?? $validated['phone'] ?? null,
+                    'email' => $validated['email'] ?? $user->email ?? null,
+
+                    'license_type' => self::TYPE_NAME,
+                    'application_type' => 'effluent',
+                    'application_category' => 'new',
+
+                    'payment_status' => 'belum_bayar',
+                    'application_status' => 'draf',
+                    'current_step' => $validated['current_step'] ?? 0,
+                    'draft_data' => $validated,
+
+                    'applicant_type' => $validated['applicant_type'] ?? null,
+                    'identity_no' => $validated['identity_no'] ?? null,
+                    'phone_no' => $validated['phone_no'] ?? $validated['phone'] ?? null,
+                    'address' => $validated['address'] ?? null,
+
+                    'company_name' => $validated['company_name'] ?? null,
+                    'registration_no' => $validated['registration_no'] ?? null,
+                    'business_address' => $validated['business_address'] ?? null,
+                    'business_phone' => $validated['business_phone'] ?? null,
+                    'business_email' => $validated['business_email'] ?? null,
+                    'responsible_officer_name' => $validated['responsible_officer_name'] ?? null,
+                    'responsible_officer_phone' => $validated['responsible_officer_phone'] ?? null,
+                    'responsible_officer_position' => $validated['responsible_officer_position'] ?? null,
+
+                    'district' => $validated['district'] ?? null,
+                    'activity_location' => $validated['activity_location'] ?? null,
+                    'longitude' => $validated['longitude'] ?? null,
+                    'latitude' => $validated['latitude'] ?? null,
+
                     'application_type_id' => $typeId,
                     'application_status_id' => $statusId,
-                    'application_category' => 'new',
                     'submitted_at' => null,
                     'remarks' => null,
                 ]);

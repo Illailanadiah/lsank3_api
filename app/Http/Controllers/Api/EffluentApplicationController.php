@@ -325,6 +325,148 @@ class EffluentApplicationController extends Controller
         ]);
     }
 
+    public function pay(Request $request, LsankApplication $application)
+{
+    if ((int) $application->user_id !== (int) $request->user()->user_id) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Permohonan tidak dijumpai.',
+        ], 404);
+    }
+
+    $typeId = $this->applicationTypeId(self::TYPE_CODE, self::TYPE_NAME);
+
+    if ((int) $application->application_type_id !== (int) $typeId) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Permohonan efluen tidak dijumpai.',
+        ], 404);
+    }
+
+    if ($application->application_status !== LsankApplication::STATUS_FI_PEMPROSESAN) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Permohonan ini belum berada di peringkat fi pemprosesan.',
+        ], 422);
+    }
+
+    return DB::transaction(function () use ($application) {
+        $statusId = $this->applicationStatusId('in_process', 'Dalam Proses', 3);
+
+        $processingInvoice = LsankInvoice::where('application_id', $application->application_id)
+            ->where('invoice_no', $this->generateProcessingInvoiceNo($application))
+            ->latest('invoice_id')
+            ->first();
+
+        if (!$processingInvoice) {
+            $fees = $this->calculateEffluentFees($application);
+            $processingInvoice = $this->createOrUpdateProcessingInvoice($application, $fees);
+        }
+
+        $serviceCode = optional(optional($application->effluent)->serviceType)->service_code ?? '600-21';
+
+        $application->application_ref_no = $this->generateApplicationFileNo(
+            $serviceCode,
+            $this->districtCode($application->district ?? null)
+        );
+
+        $application->application_status_id = $statusId;
+        $application->application_status = LsankApplication::STATUS_DALAM_PROSES;
+        $application->payment_status = LsankApplication::PAYMENT_SUDAH_BAYAR;
+        $application->submitted_at = now();
+
+        $application->remarks = trim(
+            (($application->remarks ?? '') . "\nBayaran simulasi berjaya pada " . now()->format('d/m/Y H:i'))
+        );
+
+        $application->save();
+
+        $processingInvoice->status = 'paid';
+        $processingInvoice->save();
+
+        $year = now()->format('Y');
+        $runningNo = str_pad($application->application_id, 4, '0', STR_PAD_LEFT);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Bayaran berjaya. Permohonan efluen telah dihantar untuk semakan.',
+            'data' => [
+                'id' => $application->application_id,
+                'application_id' => $application->application_id,
+                'application_ids' => [$application->application_id],
+
+                'application_no' => $application->application_ref_no,
+                'application_ref_no' => $application->application_ref_no,
+
+                'invoice_id' => $processingInvoice->invoice_id,
+                'invoice_ids' => [$processingInvoice->invoice_id],
+                'invoice_no' => $processingInvoice->invoice_no,
+
+                'receipt_id' => $application->application_id,
+                'receipt_ids' => [$application->application_id],
+                'receipt_no' => 'RESIT-' . $year . '-' . $runningNo . '-01',
+
+                'status' => LsankApplication::STATUS_DALAM_PROSES,
+                'status_display' => 'Dalam Proses',
+                'payment_status' => LsankApplication::PAYMENT_SUDAH_BAYAR,
+                'payment_status_display' => 'Sudah Bayar',
+                'paid_at' => now()->toDateTimeString(),
+            ],
+        ]);
+    });
+}
+
+public function destroyDraft(Request $request, LsankApplication $application)
+{
+    if ((int) $application->user_id !== (int) $request->user()->user_id) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Permohonan tidak dijumpai.',
+        ], 404);
+    }
+
+    $typeId = $this->applicationTypeId(self::TYPE_CODE, self::TYPE_NAME);
+
+    if ((int) $application->application_type_id !== (int) $typeId) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Permohonan efluen tidak dijumpai.',
+        ], 404);
+    }
+
+    if (!in_array($application->application_status, [
+        LsankApplication::STATUS_DRAF,
+        LsankApplication::STATUS_FI_PEMPROSESAN,
+    ], true)) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Hanya permohonan berstatus draf atau fi pemprosesan sahaja boleh dipadam.',
+        ], 422);
+    }
+
+    if ($application->payment_status === LsankApplication::PAYMENT_SUDAH_BAYAR) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Permohonan ini tidak boleh dipadam kerana bayaran telah berjaya dibuat.',
+        ], 422);
+    }
+
+    return DB::transaction(function () use ($application) {
+        LsankInvoice::where('application_id', $application->application_id)
+            ->where('status', 'unpaid')
+            ->delete();
+
+        $application->documents()->delete();
+        $application->effluent()->delete();
+        $application->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Permohonan efluen berjaya dipadam.',
+        ]);
+    });
+}
+
     private function calculateEffluentFees(LsankApplication $application): array
     {
         return [

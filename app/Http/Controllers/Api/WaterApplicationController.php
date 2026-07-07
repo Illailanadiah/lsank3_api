@@ -39,6 +39,49 @@ class WaterApplicationController extends Controller
 
                 $fees = $this->calculateWaterFees($application);
 
+                $draftData = is_array($application->draft_data)
+                    ? $application->draft_data
+                    : [];
+
+                $splitBatchId = $draftData['split_batch_id'] ?? null;
+
+                $invoiceApplicationIds = [$application->application_id];
+
+                if ($splitBatchId) {
+                    $sameBatchApplicationIds = LsankApplication::where('user_id', $application->user_id)
+                        ->where('application_type_id', $application->application_type_id)
+                        ->where('application_status', LsankApplication::STATUS_DALAM_PROSES)
+                        ->whereJsonContains('draft_data->split_batch_id', $splitBatchId)
+                        ->pluck('application_id')
+                        ->values()
+                        ->all();
+
+                    $invoiceApplicationIds = array_values(array_unique(array_merge(
+                        $invoiceApplicationIds,
+                        $sameBatchApplicationIds
+                    )));
+                }
+
+                $applicationRefNos = [$application->application_ref_no];
+
+                if ($splitBatchId) {
+                    $applicationRefNos = LsankApplication::where('user_id', $application->user_id)
+                        ->where('application_type_id', $application->application_type_id)
+                        ->where('application_status', LsankApplication::STATUS_DALAM_PROSES)
+                        ->whereJsonContains('draft_data->split_batch_id', $splitBatchId)
+                        ->orderBy('application_id')
+                        ->pluck('application_ref_no')
+                        ->filter()
+                        ->values()
+                        ->all();
+                }
+
+                $processingInvoiceActivities =
+                    $draftData['processing_invoice_activities']
+                    ?? $draftData['original_selected_activities']
+                    ?? $draftData['selected_activities']
+                    ?? [$application->activity_name ?? $application->activity_details ?? '-'];
+
                 $invoiceItems = LsankInvoice::where('application_id', $application->application_id)
                     ->latest('invoice_id')
                     ->get()
@@ -69,11 +112,11 @@ class WaterApplicationController extends Controller
                     $application->payment_status === LsankApplication::PAYMENT_SUDAH_BAYAR
                 ) {
                     $receiptItems[] = [
-                        'receipt_id' => $application->application_id . '-PROCESSING',
+                        'receipt_id' => $application->application_id,
                         'receipt_no' => 'RESIT-' . $year . '-' . $runningNo . '-01',
                         'payment_type' => 'Fi Pemprosesan',
-                        'amount' => $fees['processing_fee'],
-                        'amount_display' => 'RM ' . number_format($fees['processing_fee'], 2),
+                        'amount' => 150,
+                        'amount_display' => 'RM 150.00',
                         'paid_date' => optional($application->updated_at)->format('d/m/Y') ?? '-',
                     ];
                 }
@@ -83,6 +126,9 @@ class WaterApplicationController extends Controller
                     'application_id' => $application->application_id,
                     'application_no' => $application->application_ref_no,
                     'application_ref_no' => $application->application_ref_no,
+                    'application_ref_nos' => $applicationRefNos,
+                    'application_nos' => $applicationRefNos,
+                    'processing_invoice_activities' => $processingInvoiceActivities,
 
                     'applicant_name' => $application->applicant_name
                         ?? optional($application->applicant)->applicant_name
@@ -415,6 +461,32 @@ class WaterApplicationController extends Controller
 
         $fees = $this->calculateWaterFees($application);
 
+        $draftData = is_array($application->draft_data)
+            ? $application->draft_data
+            : [];
+
+        $splitBatchId = $draftData['split_batch_id'] ?? null;
+
+        $applicationRefNos = [$application->application_ref_no];
+
+        if ($splitBatchId) {
+            $applicationRefNos = LsankApplication::where('user_id', $application->user_id)
+                ->where('application_type_id', $application->application_type_id)
+                ->where('application_status', LsankApplication::STATUS_DALAM_PROSES)
+                ->whereJsonContains('draft_data->split_batch_id', $splitBatchId)
+                ->orderBy('application_id')
+                ->pluck('application_ref_no')
+                ->filter()
+                ->values()
+                ->all();
+        }
+
+        $processingInvoiceActivities =
+            $draftData['processing_invoice_activities']
+            ?? $draftData['original_selected_activities']
+            ?? $draftData['selected_activities']
+            ?? [$application->activity_name ?? $application->activity_details ?? '-'];
+
         $invoice = $this->createOrUpdateProcessingInvoice($application, $fees);
 
         return response()->json([
@@ -512,6 +584,8 @@ class WaterApplicationController extends Controller
 
                 $newDraftData = $this->waterDraftDataForActivity($draftData, $activity);
                 $newDraftData['selected_activities'] = [$activity];
+                $newDraftData['processing_invoice_activities'] = $selectedActivities;
+                $newDraftData['original_selected_activities'] = $selectedActivities;
                 $newDraftData['split_batch_id'] = $splitBatchId;
                 $newDraftData['is_split_child'] = true;
                 $newDraftData['split_from_application_id'] = $application->application_id;
@@ -557,6 +631,8 @@ class WaterApplicationController extends Controller
 
                     $newDraftData = $this->waterDraftDataForActivity($draftData, $activity);
                     $newDraftData['selected_activities'] = [$activity];
+                    $newDraftData['processing_invoice_activities'] = $selectedActivities;
+                    $newDraftData['original_selected_activities'] = $selectedActivities;
                     $newDraftData['split_batch_id'] = $splitBatchId;
                     $newDraftData['is_split_child'] = true;
                     $newDraftData['split_from_application_id'] = $application->application_id;
@@ -601,6 +677,7 @@ class WaterApplicationController extends Controller
                 'data' => [
                     'id' => $firstApplication->application_id,
                     'application_id' => $firstApplication->application_id,
+
                     'application_ids' => collect($createdApplications)
                         ->pluck('application_id')
                         ->values()
@@ -608,6 +685,21 @@ class WaterApplicationController extends Controller
 
                     'application_no' => $firstApplication->application_ref_no,
                     'application_ref_no' => $firstApplication->application_ref_no,
+
+                    'application_nos' => collect($createdApplications)
+                        ->pluck('application_ref_no')
+                        ->values()
+                        ->all(),
+
+                    'application_ref_nos' => collect($createdApplications)
+                        ->pluck('application_ref_no')
+                        ->values()
+                        ->all(),
+
+                    'activity_names' => collect($createdApplications)
+                        ->pluck('activity_name')
+                        ->values()
+                        ->all(),
 
                     'invoice_id' => $processingInvoice?->invoice_id ?? $firstApplication->application_id,
                     'invoice_ids' => [
@@ -867,6 +959,72 @@ class WaterApplicationController extends Controller
         $detail['operating_time'] = $application->operating_time;
         $detail['recreation_details'] = $application->recreation_details ?? [];
 
+        $draftData = is_array($application->draft_data)
+            ? $application->draft_data
+            : [];
+
+        $splitBatchId = $draftData['split_batch_id'] ?? null;
+
+        $invoiceApplicationIds = [$application->application_id];
+
+        if ($splitBatchId) {
+            $sameBatchApplicationIds = LsankApplication::where('user_id', $application->user_id)
+                ->where('application_type_id', $application->application_type_id)
+                ->where('application_status', LsankApplication::STATUS_DALAM_PROSES)
+                ->whereJsonContains('draft_data->split_batch_id', $splitBatchId)
+                ->pluck('application_id')
+                ->values()
+                ->all();
+
+            $invoiceApplicationIds = array_values(array_unique(array_merge(
+                $invoiceApplicationIds,
+                $sameBatchApplicationIds
+            )));
+        }
+
+        $invoiceItems = LsankInvoice::whereIn('application_id', $invoiceApplicationIds)
+            ->latest('invoice_id')
+            ->get()
+            ->map(function ($invoice) {
+                return [
+                    'invoice_id' => $invoice->invoice_id,
+                    'invoice_no' => $invoice->invoice_no,
+                    'payment_type' => 'Fi Pemprosesan',
+                    'amount' => (float) $invoice->total_amount,
+                    'amount_display' => 'RM ' . number_format($invoice->total_amount, 2),
+                    'invoice_date' => optional($invoice->invoice_date)->format('d/m/Y') ?? '-',
+                    'status' => $invoice->status,
+                    'paid' => $invoice->status === 'paid',
+                ];
+            })
+            ->values()
+            ->all();
+
+        $processingInvoiceActivities =
+            $draftData['processing_invoice_activities']
+            ?? $draftData['original_selected_activities']
+            ?? $draftData['selected_activities']
+            ?? [$application->activity_name ?? $application->activity_details ?? '-'];
+
+        $applicationRefNos = [$application->application_ref_no];
+
+        if ($splitBatchId) {
+            $applicationRefNos = LsankApplication::where('user_id', $application->user_id)
+                ->where('application_type_id', $application->application_type_id)
+                ->where('application_status', LsankApplication::STATUS_DALAM_PROSES)
+                ->whereJsonContains('draft_data->split_batch_id', $splitBatchId)
+                ->orderBy('application_id')
+                ->pluck('application_ref_no')
+                ->filter()
+                ->values()
+                ->all();
+        }
+
+        $detail['invoice_items'] = $invoiceItems;
+        $detail['processing_invoice_activities'] = $processingInvoiceActivities;
+        $detail['application_ref_nos'] = $applicationRefNos;
+        $detail['application_nos'] = $applicationRefNos;
+
         return response()->json([
             'success' => true,
             'data' => $detail,
@@ -1110,12 +1268,12 @@ class WaterApplicationController extends Controller
                     $isTenderBoat = str_contains(strtolower($type), 'tender');
 
                     if ($isTenderBoat) {
-                        $amount = 100;
+                        $amount = 10;
                         $chargeFee += $amount;
 
                         $chargeItems[] = [
                             'title' => 'Aktiviti Vesel Rekreasi - ' . $type,
-                            'description' => 'Tambatan vesel: RM100.00 per unit',
+                            'description' => 'Tender Boat: RM10.00 per tender',
                             'amount' => $amount,
                             'amount_display' => 'RM ' . number_format($amount, 2),
                         ];

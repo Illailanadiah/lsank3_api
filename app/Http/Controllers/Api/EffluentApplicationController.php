@@ -35,10 +35,37 @@ class EffluentApplicationController extends Controller
             ->where('application_type_id', $typeId)
             ->latest('application_id')
             ->get()
-            ->map(fn ($application) => $this->formatApplicationListItem(
-                $application,
-                self::TYPE_NAME
-            ));
+            ->map(function ($application) {
+    $item = $this->formatApplicationListItem(
+        $application,
+        self::TYPE_NAME
+    );
+
+    $invoiceItems = LsankInvoice::where('application_id', $application->application_id)
+        ->latest('invoice_id')
+        ->get()
+        ->map(function ($invoice) {
+                return [
+                    'invoice_id' => $invoice->invoice_id,
+                    'invoice_no' => $invoice->invoice_no,
+                    'payment_type' => 'Fi Pemprosesan',
+                    'amount' => (float) $invoice->total_amount,
+                    'amount_display' => 'RM ' . number_format($invoice->total_amount, 2),
+                    'invoice_date' => optional($invoice->invoice_date)->format('d/m/Y') ?? '-',
+                    'due_date' => optional($invoice->due_date)->format('d/m/Y') ?? '-',
+                    'status' => $invoice->status,
+                    'paid' => $invoice->status === 'paid',
+                ];
+            })
+            ->values()
+            ->all();
+
+        $item['invoice_items'] = $invoiceItems;
+        $item['service_name'] = optional(optional($application->effluent)->serviceType)->service_name;
+        $item['service_code'] = optional(optional($application->effluent)->serviceType)->service_code;
+
+        return $item;
+    });
 
         return response()->json([
             'success' => true,
@@ -294,6 +321,19 @@ class EffluentApplicationController extends Controller
                 'processing_fee' => $fees['processing_fee'],
                 'processing_fee_display' => 'RM ' . number_format($fees['processing_fee'], 2),
 
+                'security_fee' => $fees['security_fee'],
+                'security_fee_display' => 'RM ' . number_format($fees['security_fee'], 2),
+
+                'license_fee' => $fees['license_fee'],
+                'license_fee_display' => 'RM ' . number_format($fees['license_fee'], 2),
+
+                'charge_fee' => $fees['charge_fee'],
+                'charge_fee_display' => 'RM ' . number_format($fees['charge_fee'], 2),
+
+                'charge_items' => $fees['charge_items'],
+                'total_after_approval' => $fees['total_after_approval'],
+                'total_after_approval_display' => 'RM ' . number_format($fees['total_after_approval'], 2),
+
                 'status' => $application->application_status,
                 'payment_status' => $application->payment_status,
             ],
@@ -396,6 +436,7 @@ class EffluentApplicationController extends Controller
             ->all();
 
         $detail['invoice_items'] = $invoiceItems;
+        $detail['fees'] = $this->calculateEffluentFees($application);
 
         return response()->json([
             'success' => true,
@@ -547,13 +588,57 @@ public function destroyDraft(Request $request, LsankApplication $application)
 
     private function calculateEffluentFees(LsankApplication $application): array
     {
+        $serviceName = strtolower(
+            optional(optional($application->effluent)->serviceType)->service_name
+            ?? $application->activity_name
+            ?? ''
+        );
+
+        $securityFee = 0;
+
+        if (str_contains($serviceName, 'akuakultur air tawar')) {
+            $securityFee = 5000;
+        } elseif (str_contains($serviceName, 'akuakultur air laut')) {
+            $securityFee = 5000;
+        } elseif (str_contains($serviceName, 'pembangunan') ||
+            str_contains($serviceName, 'kerja tanah')) {
+            $securityFee = 10000;
+        } elseif (str_contains($serviceName, 'penternakan selain babi')) {
+            $securityFee = 10000;
+        } elseif (str_contains($serviceName, 'penternakan babi')) {
+            $securityFee = 10000;
+        } elseif (str_contains($serviceName, 'haiwan kesayangan')) {
+            $securityFee = 3000;
+        } elseif (str_contains($serviceName, 'kuari') ||
+            str_contains($serviceName, 'perlombongan')) {
+            $securityFee = 20000;
+        } elseif (str_contains($serviceName, 'bengkel kenderaan') ||
+            str_contains($serviceName, 'premis kedai')) {
+            $securityFee = 3000;
+        } elseif (str_contains($serviceName, 'pertanian')) {
+            $securityFee = 5000;
+        }
+
         return [
             'processing_fee' => 150,
-            'security_fee' => 0,
+            'security_fee' => $securityFee,
             'license_fee' => 0,
             'charge_fee' => 0,
-            'charge_items' => [],
-            'total_after_approval' => 0,
+            'charge_items' => [
+                [
+                    'title' => 'Fi Pemprosesan',
+                    'description' => 'Fi pemprosesan permohonan lesen pelepasan efluen.',
+                    'amount' => 150,
+                    'amount_display' => 'RM 150.00',
+                ],
+                [
+                    'title' => 'Wang Sekuriti',
+                    'description' => 'Sekuriti berdasarkan jenis aktiviti pelepasan efluen.',
+                    'amount' => $securityFee,
+                    'amount_display' => 'RM ' . number_format($securityFee, 2),
+                ],
+            ],
+            'total_after_approval' => $securityFee,
         ];
     }
 

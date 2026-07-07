@@ -12,6 +12,7 @@ use App\Models\LsankEffluentApplication;
 use App\Models\LsankServiceType;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Models\LsankInvoice;
 
 class EffluentApplicationController extends Controller
 {
@@ -234,6 +235,71 @@ class EffluentApplicationController extends Controller
         });
     }
 
+    public function generateInvoice(Request $request, LsankApplication $application)
+    {
+        if ((int) $application->user_id !== (int) $request->user()->user_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Permohonan tidak dijumpai.',
+            ], 404);
+        }
+
+        $typeId = $this->applicationTypeId(self::TYPE_CODE, self::TYPE_NAME);
+
+        if ((int) $application->application_type_id !== (int) $typeId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Permohonan efluen tidak dijumpai.',
+            ], 404);
+        }
+
+        if (in_array($application->application_status, [
+            LsankApplication::STATUS_DALAM_PROSES,
+            LsankApplication::STATUS_LULUS,
+            LsankApplication::STATUS_GAGAL,
+        ], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Permohonan ini telah dihantar atau telah selesai diproses.',
+            ], 422);
+        }
+
+        $statusId = $this->applicationStatusId('payment', 'Fi Pemprosesan', 2);
+
+        $application->application_status_id = $statusId;
+        $application->application_status = LsankApplication::STATUS_FI_PEMPROSESAN;
+        $application->payment_status = LsankApplication::PAYMENT_MENUNGGU_BAYARAN;
+        $application->submitted_at = null;
+        $application->save();
+
+        $fees = $this->calculateEffluentFees($application);
+
+        $invoice = $this->createOrUpdateProcessingInvoice($application, $fees);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Invois fi pemprosesan efluen berjaya dijana.',
+            'data' => [
+                'id' => $application->application_id,
+                'application_id' => $application->application_id,
+                'application_ids' => [$application->application_id],
+
+                'application_no' => $application->application_ref_no,
+                'application_ref_no' => $application->application_ref_no,
+
+                'invoice_id' => $invoice->invoice_id,
+                'invoice_ids' => [$invoice->invoice_id],
+                'invoice_no' => $invoice->invoice_no,
+
+                'processing_fee' => $fees['processing_fee'],
+                'processing_fee_display' => 'RM ' . number_format($fees['processing_fee'], 2),
+
+                'status' => $application->application_status,
+                'payment_status' => $application->payment_status,
+            ],
+        ]);
+    }
+
     public function show(Request $request, LsankApplication $application)
     {
         if ((int) $application->user_id !== (int) $request->user()->user_id) {
@@ -257,5 +323,44 @@ class EffluentApplicationController extends Controller
                 self::TYPE_NAME
             ),
         ]);
+    }
+
+    private function calculateEffluentFees(LsankApplication $application): array
+    {
+        return [
+            'processing_fee' => 150,
+            'security_fee' => 0,
+            'license_fee' => 0,
+            'charge_fee' => 0,
+            'charge_items' => [],
+            'total_after_approval' => 0,
+        ];
+    }
+
+    private function generateProcessingInvoiceNo(LsankApplication $application): string
+    {
+        $year = now()->format('Y');
+        $runningNo = str_pad($application->application_id, 4, '0', STR_PAD_LEFT);
+
+        return 'INVOIS-' . $year . '-' . $runningNo . '-01';
+    }
+
+    private function createOrUpdateProcessingInvoice(
+        LsankApplication $application,
+        array $fees
+    ): LsankInvoice {
+        return LsankInvoice::updateOrCreate(
+            [
+                'application_id' => $application->application_id,
+                'invoice_no' => $this->generateProcessingInvoiceNo($application),
+            ],
+            [
+                'user_id' => $application->user_id,
+                'invoice_date' => now()->toDateString(),
+                'due_date' => now()->addDays(14)->toDateString(),
+                'total_amount' => $fees['processing_fee'],
+                'status' => 'unpaid',
+            ]
+        );
     }
 }

@@ -117,6 +117,10 @@ class EffluentApplicationController extends Controller
             'sampling_method' => ['nullable', 'string'],
             'contingency_plan' => ['nullable', 'string'],
             'disposal_method' => ['nullable', 'string'],
+
+            'current_step' => ['nullable', 'integer'],
+            'draft_data' => ['nullable', 'array'],
+            'officers' => ['nullable', 'array'],
         ]);
 
         $user = $request->user();
@@ -162,7 +166,7 @@ class EffluentApplicationController extends Controller
                     'payment_status' => 'belum_bayar',
                     'application_status' => 'draf',
                     'current_step' => $validated['current_step'] ?? 0,
-                    'draft_data' => $validated,
+                    'draft_data' => $validated['draft_data'] ?? $validated,
 
                     'applicant_type' => $validated['applicant_type'] ?? null,
                     'identity_no' => $validated['identity_no'] ?? null,
@@ -189,6 +193,35 @@ class EffluentApplicationController extends Controller
                     'remarks' => null,
                 ]);
             } else {
+                $application->update([
+                'applicant_name' => $validated['applicant_name'] ?? $application->applicant_name,
+                'business_name' => $validated['company_name'] ?? $application->business_name,
+                'phone' => $validated['phone_no'] ?? $validated['phone'] ?? $application->phone,
+                'email' => $validated['email'] ?? $application->email,
+
+                'current_step' => $validated['current_step'] ?? $application->current_step,
+                'draft_data' => $validated['draft_data'] ?? $application->draft_data,
+
+                'applicant_type' => $validated['applicant_type'] ?? $application->applicant_type,
+                'identity_no' => $validated['identity_no'] ?? $application->identity_no,
+                'phone_no' => $validated['phone_no'] ?? $validated['phone'] ?? $application->phone_no,
+                'address' => $validated['address'] ?? $application->address,
+
+                'company_name' => $validated['company_name'] ?? $application->company_name,
+                'registration_no' => $validated['registration_no'] ?? $application->registration_no,
+                'business_address' => $validated['business_address'] ?? $application->business_address,
+                'business_phone' => $validated['business_phone'] ?? $application->business_phone,
+                'business_email' => $validated['business_email'] ?? $application->business_email,
+
+                'responsible_officer_name' => $validated['responsible_officer_name'] ?? $application->responsible_officer_name,
+                'responsible_officer_phone' => $validated['responsible_officer_phone'] ?? $application->responsible_officer_phone,
+                'responsible_officer_position' => $validated['responsible_officer_position'] ?? $application->responsible_officer_position,
+
+                'district' => $validated['district'] ?? $application->district,
+                'activity_location' => $validated['activity_location'] ?? $application->activity_location,
+                'longitude' => $validated['longitude'] ?? $application->longitude,
+                'latitude' => $validated['latitude'] ?? $application->latitude,
+            ]);
                 $applicant = $application->applicant;
 
                 if ($applicant) {

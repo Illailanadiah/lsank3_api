@@ -191,6 +191,8 @@ trait HandlesApplicationData
 
         return [
             ...$this->formatApplicationListItem($application, $fallbackType),
+            'current_step' => $application->current_step,
+            'draft_data' => $application->draft_data ?? [],
             'user' => $application->user,
             'applicant' => $application->applicant,
             'company' => $application->applicant?->company,

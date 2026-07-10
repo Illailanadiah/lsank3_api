@@ -286,6 +286,7 @@ class EffluentApplicationController extends Controller
                     'sampling_method' => $validated['sampling_method'] ?? null,
                     'contingency_plan' => $validated['contingency_plan'] ?? null,
                     'disposal_method' => $validated['disposal_method'] ?? null,
+                  
                 ]
             );
 

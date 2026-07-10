@@ -26,6 +26,7 @@ class ApplicationController extends Controller
             'phone' => 'nullable|string|max:30',
             'email' => 'nullable|email|max:255',
             'activity_type' => 'nullable|string|max:255',
+            'draft_data' => 'nullable|array',
         ]);
 
         $application = LsankApplication::create([
@@ -45,6 +46,8 @@ class ApplicationController extends Controller
             'application_status' => LsankApplication::STATUS_DALAM_PROSES,
 
             'submitted_at' => now(),
+            'draft_data' => $request->draft_data,
+            'submitted_data' => $request->draft_data,
         ]);
 
         return response()->json([
@@ -317,6 +320,25 @@ class ApplicationController extends Controller
             'application_status' => 'nullable|string|in:lulus,gagal,dalam_proses',
             'payment_status' => 'nullable|string|max:100',
             'remarks' => 'nullable|string',
+            'review_save_type' => 'nullable|string|max:50',
+            'report_status' => 'nullable|string|max:50',
+            'activity_reports' => 'nullable|array',
+            'review_data' => 'nullable|array',
+            'security_amount' => 'nullable',
+            'government_project' => 'nullable|string|max:255',
+            'project_invoice_mode' => 'nullable|string|max:100',
+            'invoice_generate' => 'nullable',
+            'invoice_trigger' => 'nullable',
+            'invoice_category' => 'nullable|string|max:100',
+            'invoice_fee_caj' => 'nullable',
+            'invoice_fee_lesen' => 'nullable',
+            'invoice_fee_sekuriti' => 'nullable',
+            'invoice_exempt' => 'nullable',
+            'invoice_exempt_reason' => 'nullable|string',
+            'invoice_manual_mode' => 'nullable',
+            'invoice_manual_reason' => 'nullable|string',
+            'license_start_date' => 'nullable|string|max:50',
+            'license_end_date' => 'nullable|string|max:50',
         ]);
 
         $application = LsankApplication::where('application_id', $id)->first();
@@ -339,12 +361,52 @@ class ApplicationController extends Controller
             ], 422);
         }
 
+        $existingReviewData = is_array($application->review_data)
+            ? $application->review_data
+            : [];
+
+        $incomingReviewData = $request->review_data ?? [];
+
+        if (!is_array($incomingReviewData)) {
+            $incomingReviewData = [];
+        }
+
+        $reviewData = array_replace_recursive($existingReviewData, $incomingReviewData, [
+            'meta' => [
+                'review_save_type' => $request->review_save_type ?? 'submitted',
+                'report_status' => $request->report_status ?? 'submitted',
+                'reviewed_at' => now()->toDateTimeString(),
+                'reviewed_by_user_id' => optional($request->user())->user_id,
+            ],
+            'activity_reports' => $request->activity_reports ?? ($existingReviewData['activity_reports'] ?? []),
+            'fees' => [
+                'security_amount' => $request->security_amount,
+                'government_project' => $request->government_project,
+                'project_invoice_mode' => $request->project_invoice_mode,
+                'invoice_generate' => $request->invoice_generate,
+                'invoice_trigger' => $request->invoice_trigger,
+                'invoice_category' => $request->invoice_category,
+                'invoice_fee_caj' => $request->invoice_fee_caj,
+                'invoice_fee_lesen' => $request->invoice_fee_lesen,
+                'invoice_fee_sekuriti' => $request->invoice_fee_sekuriti,
+                'invoice_exempt' => $request->invoice_exempt,
+                'invoice_exempt_reason' => $request->invoice_exempt_reason,
+                'invoice_manual_mode' => $request->invoice_manual_mode,
+                'invoice_manual_reason' => $request->invoice_manual_reason,
+            ],
+            'license' => [
+                'license_start_date' => $request->license_start_date,
+                'license_end_date' => $request->license_end_date,
+            ],
+        ]);
+
         $application->update([
             'application_status' => $request->application_status
                 ?? LsankApplication::STATUS_DALAM_PROSES,
             'payment_status' => $request->payment_status
                 ?? $application->payment_status,
             'remarks' => $request->remarks,
+            'review_data' => $reviewData,
         ]);
 
         $fresh = $application->fresh();
@@ -402,7 +464,7 @@ class ApplicationController extends Controller
             ? $application->draft_data
             : [];
 
-        $splitBatchId = $draftData['split_batch_id'] ?? null;
+        $splitBatchId = $draftData['split_batch_id'] ?? ($draftData['meta']['split_batch_id'] ?? null);
 
         $applicationRefNos = [$application->application_ref_no];
 
@@ -422,6 +484,7 @@ class ApplicationController extends Controller
             $draftData['processing_invoice_activities']
             ?? $draftData['original_selected_activities']
             ?? $draftData['selected_activities']
+            ?? ($draftData['meta']['selected_activities'] ?? null)
             ?? [$application->activity_name ?? $application->activity_details ?? '-'];
 
         $invoiceItems = LsankInvoice::where('application_id', $application->application_id)
@@ -538,6 +601,8 @@ class ApplicationController extends Controller
 
             'current_step' => $application->current_step ?? 0,
             'draft_data' => $application->draft_data,
+            'review_data' => $application->review_data,
+            'submitted_data' => $application->submitted_data,
 
             'remarks' => $application->remarks,
 

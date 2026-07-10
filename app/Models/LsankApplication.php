@@ -23,65 +23,72 @@ class LsankApplication extends Model
     protected $fillable = [
         'application_ref_no',
         'user_id',
-        'applicant_id',
-        'application_type_id',
-        'application_status_id',
-        'application_category',
-        'submitted_at',
-        'remarks',
 
         'applicant_name',
         'business_name',
         'phone',
         'email',
+
         'license_type',
         'activity_type',
         'application_type',
         'payment_status',
         'application_status',
-
-        // draft/payment flow
         'current_step',
-        'draft_data',
 
-        // common applicant data
+        'activity_name',
+        'district',
+        'activity_location',
+        'longitude',
+        'latitude',
+        'activity_details',
+
+        'submitted_at',
+        'remarks',
+
+        'draft_data',
+        'review_data',
+        'submitted_data',
+
+        // Temporary legacy fields. Keep these until all old controllers/screens are migrated.
+        'applicant_id',
+        'application_type_id',
+        'application_status_id',
+        'application_category',
+
         'applicant_type',
         'identity_no',
         'phone_no',
         'address',
 
-        // business data
         'company_name',
         'registration_no',
         'business_address',
         'business_phone',
         'business_email',
 
-        // officer data
         'responsible_officer_name',
         'responsible_officer_phone',
         'responsible_officer_position',
         'officers',
 
-        // activity/location data
         'activity_type_id',
-        'activity_name',
-        'district',
-        'activity_location',
-        'longitude',
-        'latitude',
         'operating_days',
         'operating_time',
-        'activity_details',
         'recreation_details',
         'construction_shape',
     ];
 
     protected $casts = [
         'submitted_at' => 'datetime',
+
         'draft_data' => 'array',
+        'review_data' => 'array',
+        'submitted_data' => 'array',
+
         'officers' => 'array',
         'recreation_details' => 'array',
+
         'longitude' => 'decimal:8',
         'latitude' => 'decimal:8',
     ];
@@ -136,5 +143,47 @@ class LsankApplication extends Model
             self::STATUS_GAGAL => 'Gagal',
             default => 'Draf',
         };
+    }
+
+    public function getDisplayPaymentStatusAttribute(): string
+    {
+        return match ($this->payment_status) {
+            self::PAYMENT_BELUM_BAYAR => 'Belum Bayar',
+            self::PAYMENT_MENUNGGU_BAYARAN => 'Menunggu Bayaran',
+            self::PAYMENT_SUDAH_BAYAR => 'Sudah Bayar',
+            default => 'Belum Bayar',
+        };
+    }
+
+    public function isWaterApplication(): bool
+    {
+        return $this->application_type === 'water'
+            || $this->license_type === 'Aktiviti Badan Perairan';
+    }
+
+    public function isEffluentApplication(): bool
+    {
+        return $this->application_type === 'effluent'
+            || $this->license_type === 'Aktiviti Pelepasan Efluen';
+    }
+
+    public function isDraft(): bool
+    {
+        return $this->application_status === self::STATUS_DRAF;
+    }
+
+    public function isProcessingFeeStage(): bool
+    {
+        return $this->application_status === self::STATUS_FI_PEMPROSESAN;
+    }
+
+    public function isInProcess(): bool
+    {
+        return $this->application_status === self::STATUS_DALAM_PROSES;
+    }
+
+    public function isPaid(): bool
+    {
+        return $this->payment_status === self::PAYMENT_SUDAH_BAYAR;
     }
 }

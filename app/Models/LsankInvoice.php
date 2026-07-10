@@ -25,4 +25,13 @@ class LsankInvoice extends Model
         'due_date' => 'date',
         'total_amount' => 'decimal:2',
     ];
+
+    public function application()
+    {
+        return $this->belongsTo(
+            LsankApplication::class,
+            'application_id',
+            'application_id'
+        );
+    }
 }

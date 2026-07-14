@@ -22,56 +22,192 @@ class EffluentApplicationController extends Controller
     private const TYPE_NAME = 'Aktiviti Pelepasan Efluen';
 
     public function index(Request $request)
-    {
-        $typeId = $this->applicationTypeId(self::TYPE_CODE, self::TYPE_NAME);
-
-        $applications = LsankApplication::with([
-                'applicant.company.officers',
-                'status',
-                'type',
-                'effluent.serviceType',
-            ])
-            ->where('user_id', $request->user()->user_id)
-            ->where('application_type_id', $typeId)
-            ->latest('application_id')
-            ->get()
-            ->map(function ($application) {
-    $item = $this->formatApplicationListItem(
-        $application,
+{
+    $typeId = $this->applicationTypeId(
+        self::TYPE_CODE,
         self::TYPE_NAME
     );
 
-    $invoiceItems = LsankInvoice::where('application_id', $application->application_id)
-        ->latest('invoice_id')
+    $applications = LsankApplication::with([
+            'applicant.company.officers',
+            'status',
+            'type',
+            'effluent.serviceType',
+        ])
+        ->where('user_id', $request->user()->user_id)
+        ->where('application_type_id', $typeId)
+        ->latest('application_id')
         ->get()
-        ->map(function ($invoice) {
-                return [
-                    'invoice_id' => $invoice->invoice_id,
-                    'invoice_no' => $invoice->invoice_no,
+        ->map(function ($application) {
+            $item = $this->formatApplicationListItem(
+                $application,
+                self::TYPE_NAME
+            );
+
+            $serviceName =
+                $application->effluent?->serviceType?->service_name
+                ?? '-';
+
+            $invoiceItems = LsankInvoice::where(
+                    'application_id',
+                    $application->application_id
+                )
+                ->orderBy('invoice_id')
+                ->get()
+                ->map(function ($invoice) use (
+                    $application,
+                    $serviceName
+                ) {
+                    return [
+                        'invoice_id' => $invoice->invoice_id,
+                        'application_id' =>
+                            $application->application_id,
+
+                        'invoice_no' => $invoice->invoice_no,
+                        'payment_type' => 'Fi Pemprosesan',
+
+                        'amount' => (float) $invoice->total_amount,
+                        'amount_display' => 'RM ' . number_format(
+                            (float) $invoice->total_amount,
+                            2
+                        ),
+
+                        'invoice_date' => optional(
+                            $invoice->invoice_date
+                        )->format('d/m/Y') ?? '-',
+
+                        'due_date' => optional(
+                            $invoice->due_date
+                        )->format('d/m/Y') ?? '-',
+
+                        'status' => $invoice->status,
+                        'paid' => $invoice->status === 'paid',
+
+                        'application_ref_no' =>
+                            $application->application_ref_no,
+                        'application_no' =>
+                            $application->application_ref_no,
+
+                        'service_name' => $serviceName,
+                        'activity_name' => $serviceName,
+                        'activity_details' => $serviceName,
+                    ];
+                })
+                ->values()
+                ->all();
+
+            $receiptItems = [];
+
+            if (
+                $application->payment_status ===
+                    LsankApplication::PAYMENT_SUDAH_BAYAR
+            ) {
+                $year = optional($application->updated_at)
+                    ->format('Y') ?? now()->format('Y');
+
+                $runningNo = str_pad(
+                    (string) $application->application_id,
+                    4,
+                    '0',
+                    STR_PAD_LEFT
+                );
+
+                $paidInvoice = collect($invoiceItems)
+                    ->firstWhere('paid', true);
+
+                $receiptItems[] = [
+                    'receipt_id' =>
+                        $application->application_id,
+
+                    'application_id' =>
+                        $application->application_id,
+
+                    'receipt_no' =>
+                        'RESIT-' . $year . '-' .
+                        $runningNo . '-01',
+
+                    'invoice_id' =>
+                        $paidInvoice['invoice_id'] ?? null,
+
+                    'invoice_no' =>
+                        $paidInvoice['invoice_no'] ?? null,
+
+                    'application_ref_no' =>
+                        $application->application_ref_no,
+
+                    'application_no' =>
+                        $application->application_ref_no,
+
                     'payment_type' => 'Fi Pemprosesan',
-                    'amount' => (float) $invoice->total_amount,
-                    'amount_display' => 'RM ' . number_format($invoice->total_amount, 2),
-                    'invoice_date' => optional($invoice->invoice_date)->format('d/m/Y') ?? '-',
-                    'due_date' => optional($invoice->due_date)->format('d/m/Y') ?? '-',
-                    'status' => $invoice->status,
-                    'paid' => $invoice->status === 'paid',
+
+                    'amount' => (float) (
+                        $paidInvoice['amount'] ?? 150
+                    ),
+
+                    'amount_display' =>
+                        $paidInvoice['amount_display']
+                        ?? 'RM 150.00',
+
+                    'paid_date' => optional(
+                        $application->updated_at
+                    )->format('d/m/Y') ?? '-',
+
+                    'paid_at' => optional(
+                        $application->updated_at
+                    )->toDateTimeString(),
+
+                    'service_name' => $serviceName,
+                    'activity_name' => $serviceName,
+                    'activity_details' => $serviceName,
                 ];
-            })
-            ->values()
-            ->all();
+            }
 
-        $item['invoice_items'] = $invoiceItems;
-        $item['service_name'] = optional(optional($application->effluent)->serviceType)->service_name;
-        $item['service_code'] = optional(optional($application->effluent)->serviceType)->service_code;
+            $item['applicant_name'] =
+                $application->applicant_name
+                ?? $application->applicant?->applicant_name
+                ?? '-';
 
-        return $item;
-    });
+            $item['business_name'] =
+                $application->business_name
+                ?? $application->company_name
+                ?? $application->applicant?->company?->company_name
+                ?? '-';
 
-        return response()->json([
-            'success' => true,
-            'data' => $applications,
-        ]);
-    }
+            $item['company_name'] =
+                $application->company_name
+                ?? $application->applicant?->company?->company_name
+                ?? '-';
+
+            $item['email'] =
+                $application->email
+                ?? $application->applicant?->email
+                ?? '-';
+
+            $item['phone'] =
+                $application->phone
+                ?? $application->phone_no
+                ?? '-';
+
+            $item['application_type_source'] = 'effluent';
+
+            $item['service_name'] = $serviceName;
+            $item['activity_name'] = $serviceName;
+            $item['activity_details'] = $serviceName;
+
+            $item['payment_status'] =
+                $application->payment_status;
+
+            $item['invoice_items'] = $invoiceItems;
+            $item['receipt_items'] = $receiptItems;
+
+            return $item;
+        });
+
+    return response()->json([
+        'success' => true,
+        'data' => $applications,
+    ]);
+}
 
     public function store(Request $request)
     {
@@ -374,109 +510,215 @@ class EffluentApplicationController extends Controller
         ]);
     }
 
-    public function show(Request $request, LsankApplication $application)
-    {
-        if ((int) $application->user_id !== (int) $request->user()->user_id) {
-            abort(403, 'Anda tidak dibenarkan melihat permohonan ini.');
-        }
+    public function show(
+    Request $request,
+    LsankApplication $application
+) {
+    if (
+        (int) $application->user_id !==
+        (int) $request->user()->user_id
+    ) {
+        abort(
+            403,
+            'Anda tidak dibenarkan melihat permohonan ini.'
+        );
+    }
 
-        $typeId = $this->applicationTypeId(self::TYPE_CODE, self::TYPE_NAME);
+    $typeId = $this->applicationTypeId(
+        self::TYPE_CODE,
+        self::TYPE_NAME
+    );
 
-        if ((int) $application->application_type_id !== (int) $typeId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Permohonan efluen tidak dijumpai.',
-            ], 404);
-        }
+    if (
+        (int) $application->application_type_id !==
+        (int) $typeId
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' =>
+                'Permohonan efluen tidak dijumpai.',
+        ], 404);
+    }
 
-        $application->load([
-            'user',
-            'applicant.company.officers',
-            'status',
-            'type',
-            'effluent.serviceType',
-            'documents',
-            'reviews',
-        ]);
+    $application->load([
+        'user',
+        'applicant.company.officers',
+        'status',
+        'type',
+        'effluent.serviceType',
+        'documents',
+        'reviews',
+    ]);
 
-        $detail = $this->formatApplicationDetail(
+    $detail = $this->formatApplicationDetail(
+        $application,
+        self::TYPE_NAME
+    );
+
+    $serviceName =
+        $application->effluent?->serviceType?->service_name
+        ?? '-';
+
+    $invoiceItems = LsankInvoice::where(
+            'application_id',
+            $application->application_id
+        )
+        ->orderBy('invoice_id')
+        ->get()
+        ->map(function ($invoice) use (
             $application,
-            self::TYPE_NAME
+            $serviceName
+        ) {
+            return [
+                'invoice_id' => $invoice->invoice_id,
+                'application_id' =>
+                    $application->application_id,
+
+                'invoice_no' => $invoice->invoice_no,
+                'payment_type' => 'Fi Pemprosesan',
+
+                'amount' => (float) $invoice->total_amount,
+                'amount_display' => 'RM ' . number_format(
+                    (float) $invoice->total_amount,
+                    2
+                ),
+
+                'invoice_date' => optional(
+                    $invoice->invoice_date
+                )->format('d/m/Y') ?? '-',
+
+                'due_date' => optional(
+                    $invoice->due_date
+                )->format('d/m/Y') ?? '-',
+
+                'status' => $invoice->status,
+                'paid' => $invoice->status === 'paid',
+
+                'application_ref_no' =>
+                    $application->application_ref_no,
+                'application_no' =>
+                    $application->application_ref_no,
+
+                'service_name' => $serviceName,
+                'activity_name' => $serviceName,
+                'activity_details' => $serviceName,
+            ];
+        })
+        ->values()
+        ->all();
+
+    $receiptItems = [];
+
+    if (
+        $application->payment_status ===
+            LsankApplication::PAYMENT_SUDAH_BAYAR
+    ) {
+        $year = optional($application->updated_at)
+            ->format('Y') ?? now()->format('Y');
+
+        $runningNo = str_pad(
+            (string) $application->application_id,
+            4,
+            '0',
+            STR_PAD_LEFT
         );
 
-        $detail['id'] = $application->application_id;
-        $detail['application_id'] = $application->application_id;
-        $detail['application_no'] = $application->application_ref_no;
-        $detail['application_ref_no'] = $application->application_ref_no;
+        $paidInvoice = collect($invoiceItems)
+            ->firstWhere('paid', true);
 
-        $detail['current_step'] = $application->current_step ?? 0;
-        $detail['draft_data'] = $application->draft_data ?? [];
+        $receiptItems[] = [
+            'receipt_id' =>
+                $application->application_id,
 
-        $detail['applicant_type'] = $application->applicant_type;
-        $detail['applicant_name'] = $application->applicant_name;
-        $detail['identity_no'] = $application->identity_no;
-        $detail['email'] = $application->email;
-        $detail['phone_no'] = $application->phone_no;
-        $detail['phone'] = $application->phone;
-        $detail['address'] = $application->address;
+            'application_id' =>
+                $application->application_id,
 
-        $detail['company_name'] = $application->company_name;
-        $detail['business_name'] = $application->business_name;
-        $detail['registration_no'] = $application->registration_no;
-        $detail['business_address'] = $application->business_address;
-        $detail['business_phone'] = $application->business_phone;
-        $detail['business_email'] = $application->business_email;
+            'receipt_no' =>
+                'RESIT-' . $year . '-' .
+                $runningNo . '-01',
 
-        $detail['responsible_officer_name'] = $application->responsible_officer_name;
-        $detail['responsible_officer_phone'] = $application->responsible_officer_phone;
-        $detail['responsible_officer_position'] = $application->responsible_officer_position;
-        $detail['officers'] = $application->officers ?? [];
+            'invoice_id' =>
+                $paidInvoice['invoice_id'] ?? null,
 
-        $detail['activity_name'] = $application->activity_name;
-        $detail['activity_details'] = $application->activity_details;
-        $detail['district'] = $application->district;
-        $detail['activity_location'] = $application->activity_location;
-        $detail['longitude'] = $application->longitude;
-        $detail['latitude'] = $application->latitude;
+            'invoice_no' =>
+                $paidInvoice['invoice_no'] ?? null,
 
-        $detail['service_type_id'] = optional($application->effluent)->service_type_id;
-        $detail['service_name'] = optional(optional($application->effluent)->serviceType)->service_name;
-        $detail['service_code'] = optional(optional($application->effluent)->serviceType)->service_code;
+            'application_ref_no' =>
+                $application->application_ref_no,
 
-        $detail['composition'] = optional($application->effluent)->composition;
-        $detail['frequency'] = optional($application->effluent)->frequency;
-        $detail['flow_rate'] = optional($application->effluent)->flow_rate;
-        $detail['sampling_method'] = optional($application->effluent)->sampling_method;
-        $detail['contingency_plan'] = optional($application->effluent)->contingency_plan;
-        $detail['disposal_method'] = optional($application->effluent)->disposal_method;
+            'application_no' =>
+                $application->application_ref_no,
 
-        $invoiceItems = LsankInvoice::where('application_id', $application->application_id)
-            ->latest('invoice_id')
-            ->get()
-            ->map(function ($invoice) {
-                return [
-                    'invoice_id' => $invoice->invoice_id,
-                    'invoice_no' => $invoice->invoice_no,
-                    'payment_type' => 'Fi Pemprosesan',
-                    'amount' => (float) $invoice->total_amount,
-                    'amount_display' => 'RM ' . number_format($invoice->total_amount, 2),
-                    'invoice_date' => optional($invoice->invoice_date)->format('d/m/Y') ?? '-',
-                    'due_date' => optional($invoice->due_date)->format('d/m/Y') ?? '-',
-                    'status' => $invoice->status,
-                    'paid' => $invoice->status === 'paid',
-                ];
-            })
-            ->values()
-            ->all();
+            'payment_type' => 'Fi Pemprosesan',
 
-        $detail['invoice_items'] = $invoiceItems;
-        $detail['fees'] = $this->calculateEffluentFees($application);
+            'amount' => (float) (
+                $paidInvoice['amount'] ?? 150
+            ),
 
-        return response()->json([
-            'success' => true,
-            'data' => $detail,
-        ]);
+            'amount_display' =>
+                $paidInvoice['amount_display']
+                ?? 'RM 150.00',
+
+            'paid_date' => optional(
+                $application->updated_at
+            )->format('d/m/Y') ?? '-',
+
+            'paid_at' => optional(
+                $application->updated_at
+            )->toDateTimeString(),
+
+            'service_name' => $serviceName,
+            'activity_name' => $serviceName,
+            'activity_details' => $serviceName,
+        ];
     }
+
+    $detail['application_type_source'] = 'effluent';
+
+    $detail['applicant_type'] =
+        $application->applicant_type
+        ?? $application->applicant?->applicant_type;
+
+    $detail['applicant_name'] =
+        $application->applicant_name
+        ?? $application->applicant?->applicant_name;
+
+    $detail['email'] =
+        $application->email
+        ?? $application->applicant?->email;
+
+    $detail['phone'] =
+        $application->phone
+        ?? $application->phone_no;
+
+    $detail['phone_no'] =
+        $application->phone_no
+        ?? $application->phone;
+
+    $detail['company_name'] =
+        $application->company_name
+        ?? $application->applicant?->company?->company_name;
+
+    $detail['business_name'] =
+        $application->business_name
+        ?? $application->company_name
+        ?? $application->applicant?->company?->company_name;
+
+    $detail['service_name'] = $serviceName;
+    $detail['activity_name'] = $serviceName;
+    $detail['activity_details'] = $serviceName;
+
+    $detail['payment_status'] =
+        $application->payment_status;
+
+    $detail['invoice_items'] = $invoiceItems;
+    $detail['receipt_items'] = $receiptItems;
+
+    return response()->json([
+        'success' => true,
+        'data' => $detail,
+    ]);
+}
 
     public function pay(Request $request, LsankApplication $application)
 {
@@ -524,9 +766,14 @@ class EffluentApplicationController extends Controller
         );
 
         $application->application_status_id = $statusId;
-        $application->application_status = LsankApplication::STATUS_DALAM_PROSES;
-        $application->payment_status = LsankApplication::PAYMENT_SUDAH_BAYAR;
+        $application->application_status =
+            LsankApplication::STATUS_DALAM_PROSES;
+
+        $application->payment_status =
+            LsankApplication::PAYMENT_SUDAH_BAYAR;
+
         $application->submitted_at = now();
+        $application->save();
 
         $application->remarks = trim(
             (($application->remarks ?? '') . "\nBayaran simulasi berjaya pada " . now()->format('d/m/Y H:i'))
@@ -539,6 +786,17 @@ class EffluentApplicationController extends Controller
 
         $year = now()->format('Y');
         $runningNo = str_pad($application->application_id, 4, '0', STR_PAD_LEFT);
+        $invoice = LsankInvoice::where(
+        'application_id',
+        $application->application_id
+        )
+        ->latest('invoice_id')
+        ->first();
+
+        if ($invoice) {
+            $invoice->status = 'paid';
+            $invoice->save();
+        }
 
         return response()->json([
             'success' => true,

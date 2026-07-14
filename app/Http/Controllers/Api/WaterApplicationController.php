@@ -616,7 +616,11 @@ class WaterApplicationController extends Controller
         }
 
         return DB::transaction(function () use ($application) {
-            $statusId = $this->applicationStatusId('in_process', 'Dalam Proses', 3);
+            $statusId = $this->applicationStatusId(
+                'in_process',
+                'Dalam Proses',
+                3
+            );
 
             $draftData = is_array($application->draft_data)
                 ? $application->draft_data
@@ -648,15 +652,25 @@ class WaterApplicationController extends Controller
             }
 
             $splitBatchId = $draftData['split_batch_id']
-                ?? 'WATER-BATCH-' . $application->application_id . '-' . now()->format('YmdHis');
+                ?? 'WATER-BATCH-'
+                    . $application->application_id
+                    . '-'
+                    . now()->format('YmdHis');
 
-            $invoices = LsankInvoice::where('application_id', $application->application_id)
+            $invoices = LsankInvoice::where(
+                    'application_id',
+                    $application->application_id
+                )
                 ->where('status', 'unpaid')
                 ->orderBy('invoice_id')
-                ->get();
+                ->get()
+                ->values();
 
             if ($invoices->count() < count($selectedActivities)) {
-                LsankInvoice::where('application_id', $application->application_id)
+                LsankInvoice::where(
+                        'application_id',
+                        $application->application_id
+                    )
                     ->where('status', 'unpaid')
                     ->delete();
 
@@ -679,10 +693,13 @@ class WaterApplicationController extends Controller
                         ])
                     );
                 }
+
+                $invoices = $invoices->values();
             }
 
             $paidApplications = [];
             $paidInvoices = [];
+            $originalApplicationId = $application->application_id;
 
             foreach ($selectedActivities as $index => $activity) {
                 if ($index === 0) {
@@ -693,90 +710,57 @@ class WaterApplicationController extends Controller
                     $splitApplication->application_id = null;
                 }
 
-                $newDraftData = $this->waterDraftDataForActivity($draftData, $activity);
+                $newDraftData = $this->waterDraftDataForActivity(
+                    $draftData,
+                    $activity
+                );
+
                 $newDraftData['selected_activities'] = [$activity];
                 $newDraftData['processing_invoice_activities'] = [$activity];
-                $newDraftData['original_selected_activities'] = $selectedActivities;
+                $newDraftData['original_selected_activities'] =
+                    $selectedActivities;
                 $newDraftData['split_batch_id'] = $splitBatchId;
                 $newDraftData['is_split_child'] = true;
                 $newDraftData['is_split_parent'] = $index === 0;
-                $newDraftData['split_from_application_id'] = $application->application_id;
+                $newDraftData['split_from_application_id'] =
+                    $originalApplicationId;
 
                 $splitApplication->draft_data = $newDraftData;
-                $splitApplication->current_step = $application->current_step ?? 0;
+                $splitApplication->submitted_data = $newDraftData;
+                $splitApplication->current_step =
+                    $application->current_step ?? 0;
 
                 $splitApplication->activity_name = $activity;
                 $splitApplication->activity_type = $activity;
                 $splitApplication->activity_details = $activity;
 
-                $splitApplication->application_ref_no = $this->generateApplicationFileNo(
-                    $this->waterSectionCode($activity),
-                    $this->districtCode($application->district ?? null)
-                );
-
-                $application->application_status_id = $statusId;
-                $application->application_status = LsankApplication::STATUS_DALAM_PROSES;
-                $application->payment_status = LsankApplication::PAYMENT_SUDAH_BAYAR;
-                $application->submitted_at = now();
-                $application->submitted_data = $application->draft_data;
-                $splitApplication->application_status_id = $statusId;
-                $splitApplication->application_status = LsankApplication::STATUS_DALAM_PROSES;
-                $splitApplication->payment_status = LsankApplication::PAYMENT_SUDAH_BAYAR;
-                $splitApplication->submitted_at = now();
-
-                $splitApplication->remarks = trim(
-                    (($splitApplication->remarks ?? '') . "\nBayaran simulasi berjaya pada " . now()->format('d/m/Y H:i'))
-                );
-
-                $application->save();
-
-                $this->syncWaterBodyForActivity($application, $activity);
-
-                $createdApplications[] = $application;
-            } else {
-                foreach ($selectedActivities as $activity) {
-                    $newApplication = $application->replicate();
-
-                    $newApplication->application_ref_no = $this->generateApplicationFileNo(
+                $splitApplication->application_ref_no =
+                    $this->generateApplicationFileNo(
                         $this->waterSectionCode($activity),
                         $this->districtCode($application->district ?? null)
                     );
 
-                    $newApplication->application_status_id = $statusId;
-                    $newApplication->application_status = LsankApplication::STATUS_DALAM_PROSES;
-                    $newApplication->payment_status = LsankApplication::PAYMENT_SUDAH_BAYAR;
-                    $newApplication->submitted_at = now();
+                $splitApplication->application_status_id = $statusId;
+                $splitApplication->application_status =
+                    LsankApplication::STATUS_DALAM_PROSES;
+                $splitApplication->payment_status =
+                    LsankApplication::PAYMENT_SUDAH_BAYAR;
+                $splitApplication->submitted_at = now();
 
-                    $newApplication->activity_name = $activity;
-                    $newApplication->activity_type = $activity;
-                    $newApplication->activity_details = $activity;
+                $splitApplication->remarks = trim(
+                    (($splitApplication->remarks ?? '')
+                        . "\nBayaran simulasi berjaya pada "
+                        . now()->format('d/m/Y H:i'))
+                );
 
-                    $newDraftData = $this->waterDraftDataForActivity($draftData, $activity);
-                    $newDraftData['selected_activities'] = [$activity];
-                    $newDraftData['processing_invoice_activities'] = $selectedActivities;
-                    $newDraftData['original_selected_activities'] = $selectedActivities;
-                    $newDraftData['split_batch_id'] = $splitBatchId;
-                    $newDraftData['is_split_child'] = true;
-                    $newDraftData['split_from_application_id'] = $application->application_id;
-
-                    $newApplication->draft_data = $newDraftData;
-                    $newApplication->submitted_data = $newDraftData;
-                    $newApplication->current_step = $application->current_step ?? 0;
-
-                    $newApplication->remarks = trim(
-                        (($newApplication->remarks ?? '') . "\nBayaran simulasi berjaya pada " . now()->format('d/m/Y H:i'))
-                    );
-
-                    $newApplication->save();
-
-                    $this->syncWaterBodyForActivity($newApplication, $activity);
-
-                    $createdApplications[] = $newApplication;
                 $splitApplication->save();
 
-                $this->syncWaterBodyForActivity($splitApplication, $activity);
+                $this->syncWaterBodyForActivity(
+                    $splitApplication,
+                    $activity
+                );
 
-                $invoice = $invoices->values()->get($index);
+                $invoice = $invoices->get($index);
 
                 if (!$invoice) {
                     $invoice = LsankInvoice::create([
@@ -803,15 +787,30 @@ class WaterApplicationController extends Controller
                 $paidInvoices[] = $invoice;
             }
 
+            if (empty($paidApplications) || empty($paidInvoices)) {
+                throw new \RuntimeException(
+                    'Tiada permohonan atau invois berjaya diproses.'
+                );
+            }
+
             $firstApplication = $paidApplications[0];
             $firstInvoice = $paidInvoices[0];
 
             $receiptNos = collect($paidApplications)
                 ->map(function ($item) {
                     $year = now()->format('Y');
-                    $runningNo = str_pad($item->application_id, 4, '0', STR_PAD_LEFT);
+                    $runningNo = str_pad(
+                        $item->application_id,
+                        4,
+                        '0',
+                        STR_PAD_LEFT
+                    );
 
-                    return 'RESIT-' . $year . '-' . $runningNo . '-01';
+                    return 'RESIT-'
+                        . $year
+                        . '-'
+                        . $runningNo
+                        . '-01';
                 })
                 ->values()
                 ->all();
@@ -830,8 +829,10 @@ class WaterApplicationController extends Controller
                         ->values()
                         ->all(),
 
-                    'application_no' => $firstApplication->application_ref_no,
-                    'application_ref_no' => $firstApplication->application_ref_no,
+                    'application_no' =>
+                        $firstApplication->application_ref_no,
+                    'application_ref_no' =>
+                        $firstApplication->application_ref_no,
 
                     'application_nos' => collect($paidApplications)
                         ->pluck('application_ref_no')
@@ -876,7 +877,8 @@ class WaterApplicationController extends Controller
 
                     'status' => LsankApplication::STATUS_DALAM_PROSES,
                     'status_display' => 'Dalam Proses',
-                    'payment_status' => LsankApplication::PAYMENT_SUDAH_BAYAR,
+                    'payment_status' =>
+                        LsankApplication::PAYMENT_SUDAH_BAYAR,
                     'payment_status_display' => 'Sudah Bayar',
                     'paid_at' => now()->toDateTimeString(),
                 ],

@@ -53,7 +53,7 @@ class LsankApplication extends Model
         // Temporary legacy fields. Keep these until all old controllers/screens are migrated.
         'applicant_id',
         'application_type_id',
-        'application_status_id',
+        'application_status',
         'application_category',
 
         'applicant_type',

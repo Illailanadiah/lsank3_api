@@ -1,11 +1,14 @@
 <?php
 
+
 namespace App\Http\Controllers\Api;
+
 
 use App\Http\Controllers\Controller;
 use App\Models\LsankApplication;
 use App\Models\LsankInvoice;
 use Illuminate\Http\Request;
+
 
 class ApplicationController extends Controller
 {
@@ -18,6 +21,7 @@ class ApplicationController extends Controller
     |--------------------------------------------------------------------------
     */
 
+
     public function storeWaterApplication(Request $request)
     {
         $request->validate([
@@ -29,26 +33,32 @@ class ApplicationController extends Controller
             'draft_data' => 'nullable|array',
         ]);
 
+
         $application = LsankApplication::create([
             'application_ref_no' => $this->generateReferenceNo(),
             'user_id' => $request->user()->user_id,
+
 
             'applicant_name' => $request->applicant_name,
             'business_name' => $request->business_name,
             'phone' => $request->phone,
             'email' => $request->email,
 
+
             'license_type' => 'Aktiviti Badan Perairan',
             'activity_type' => $request->activity_type ?? 'Tidak Dinyatakan',
             'application_type' => 'water',
 
+
             'payment_status' => LsankApplication::PAYMENT_SUDAH_BAYAR,
             'application_status' => LsankApplication::STATUS_DALAM_PROSES,
+
 
             'submitted_at' => now(),
             'draft_data' => $request->draft_data,
             'submitted_data' => $request->draft_data,
         ]);
+
 
         return response()->json([
             'success' => true,
@@ -57,6 +67,7 @@ class ApplicationController extends Controller
             'data' => $this->formatApplication($application),
         ], 201);
     }
+
 
     /*
     |--------------------------------------------------------------------------
@@ -67,6 +78,7 @@ class ApplicationController extends Controller
     |--------------------------------------------------------------------------
     */
 
+
     public function myApplications(Request $request)
     {
         $applications = $this->applicationBaseQuery()
@@ -75,12 +87,14 @@ class ApplicationController extends Controller
             ->get()
             ->map(fn ($application) => $this->formatApplication($application));
 
+
         return response()->json([
             'success' => true,
             'applications' => $applications,
             'data' => $applications,
         ]);
     }
+
 
     /*
     |--------------------------------------------------------------------------
@@ -90,6 +104,7 @@ class ApplicationController extends Controller
     | dalam_proses, lulus, gagal
     |--------------------------------------------------------------------------
     */
+
 
     private function applicationBaseQuery()
     {
@@ -102,6 +117,7 @@ class ApplicationController extends Controller
         ]);
     }
 
+
     private function adminEligibleQuery()
     {
         return $this->applicationBaseQuery()
@@ -113,6 +129,7 @@ class ApplicationController extends Controller
             ]);
     }
 
+
     public function adminApplications()
     {
         $applications = $this->adminEligibleQuery()
@@ -120,12 +137,14 @@ class ApplicationController extends Controller
             ->get()
             ->map(fn ($application) => $this->formatApplication($application));
 
+
         return response()->json([
             'success' => true,
             'applications' => $applications,
             'data' => $applications,
         ]);
     }
+
 
     public function adminWaterApplications()
     {
@@ -144,12 +163,14 @@ class ApplicationController extends Controller
             ->get()
             ->map(fn ($application) => $this->formatApplication($application));
 
+
         return response()->json([
             'success' => true,
             'applications' => $applications,
             'data' => $applications,
         ]);
     }
+
 
     public function adminEffluentApplications()
     {
@@ -168,6 +189,7 @@ class ApplicationController extends Controller
             ->get()
             ->map(fn ($application) => $this->formatApplication($application));
 
+
         return response()->json([
             'success' => true,
             'applications' => $applications,
@@ -175,17 +197,20 @@ class ApplicationController extends Controller
         ]);
     }
 
+
     /*
     |--------------------------------------------------------------------------
     | Admin Side - Application Detail
     |--------------------------------------------------------------------------
     */
 
+
     public function show($id)
     {
         $application = $this->adminEligibleQuery()
             ->where('application_id', $id)
             ->first();
+
 
         if (!$application) {
             return response()->json([
@@ -194,12 +219,14 @@ class ApplicationController extends Controller
             ], 404);
         }
 
+
         return response()->json([
             'success' => true,
             'application' => $this->formatApplication($application),
             'data' => $this->formatApplication($application),
         ]);
     }
+
 
     public function showWater($id)
     {
@@ -217,6 +244,7 @@ class ApplicationController extends Controller
             })
             ->first();
 
+
         if (!$application) {
             return response()->json([
                 'success' => false,
@@ -224,12 +252,14 @@ class ApplicationController extends Controller
             ], 404);
         }
 
+
         return response()->json([
             'success' => true,
             'application' => $this->formatApplication($application),
             'data' => $this->formatApplication($application),
         ]);
     }
+
 
     public function showEffluent($id)
     {
@@ -247,6 +277,7 @@ class ApplicationController extends Controller
             })
             ->first();
 
+
         if (!$application) {
             return response()->json([
                 'success' => false,
@@ -254,12 +285,14 @@ class ApplicationController extends Controller
             ], 404);
         }
 
+
         return response()->json([
             'success' => true,
             'application' => $this->formatApplication($application),
             'data' => $this->formatApplication($application),
         ]);
     }
+
 
     /*
     |--------------------------------------------------------------------------
@@ -270,6 +303,7 @@ class ApplicationController extends Controller
     |--------------------------------------------------------------------------
     */
 
+
     public function updateStatus(Request $request, $id)
     {
         $request->validate([
@@ -278,7 +312,9 @@ class ApplicationController extends Controller
             'remarks' => 'nullable|string',
         ]);
 
+
         $application = LsankApplication::where('application_id', $id)->first();
+
 
         if (!$application) {
             return response()->json([
@@ -286,6 +322,7 @@ class ApplicationController extends Controller
                 'message' => 'Permohonan tidak dijumpai.',
             ], 404);
         }
+
 
         if (!in_array($application->application_status, [
             LsankApplication::STATUS_DALAM_PROSES,
@@ -298,13 +335,16 @@ class ApplicationController extends Controller
             ], 422);
         }
 
+
         $application->update([
             'application_status' => $request->application_status,
             'payment_status' => $request->payment_status ?? $application->payment_status,
             'remarks' => $request->remarks,
         ]);
 
+
         $fresh = $application->fresh();
+
 
         return response()->json([
             'success' => true,
@@ -313,6 +353,7 @@ class ApplicationController extends Controller
             'data' => $this->formatApplication($fresh),
         ]);
     }
+
 
     public function review(Request $request, $id)
     {
@@ -339,9 +380,21 @@ class ApplicationController extends Controller
             'invoice_manual_reason' => 'nullable|string',
             'license_start_date' => 'nullable|string|max:50',
             'license_end_date' => 'nullable|string|max:50',
-        ]);
+        'assigned_to_name' => 'nullable|string|max:255',
+'assigned_to_email' => 'nullable|email|max:255',
+'assigned_to_role' => 'nullable|string|max:100',
+'workflow_stage' => 'nullable|string|max:100',
+
+'head_remark' => 'nullable|string',
+'head_feedback' => 'nullable|string',
+'head_feedback_target' => 'nullable|string|max:100',
+'head_officer_name' => 'nullable|string|max:255',
+'head_officer_email' => 'nullable|email|max:255',
+            ]);
+
 
         $application = LsankApplication::where('application_id', $id)->first();
+
 
         if (!$application) {
             return response()->json([
@@ -349,6 +402,7 @@ class ApplicationController extends Controller
                 'message' => 'Permohonan tidak dijumpai.',
             ], 404);
         }
+
 
         if (!in_array($application->application_status, [
             LsankApplication::STATUS_DALAM_PROSES,
@@ -361,44 +415,92 @@ class ApplicationController extends Controller
             ], 422);
         }
 
+
         $existingReviewData = is_array($application->review_data)
             ? $application->review_data
             : [];
 
+
         $incomingReviewData = $request->review_data ?? [];
+
 
         if (!is_array($incomingReviewData)) {
             $incomingReviewData = [];
         }
 
-        $reviewData = array_replace_recursive($existingReviewData, $incomingReviewData, [
-            'meta' => [
-                'review_save_type' => $request->review_save_type ?? 'submitted',
-                'report_status' => $request->report_status ?? 'submitted',
-                'reviewed_at' => now()->toDateTimeString(),
-                'reviewed_by_user_id' => optional($request->user())->user_id,
-            ],
-            'activity_reports' => $request->activity_reports ?? ($existingReviewData['activity_reports'] ?? []),
-            'fees' => [
-                'security_amount' => $request->security_amount,
-                'government_project' => $request->government_project,
-                'project_invoice_mode' => $request->project_invoice_mode,
-                'invoice_generate' => $request->invoice_generate,
-                'invoice_trigger' => $request->invoice_trigger,
-                'invoice_category' => $request->invoice_category,
-                'invoice_fee_caj' => $request->invoice_fee_caj,
-                'invoice_fee_lesen' => $request->invoice_fee_lesen,
-                'invoice_fee_sekuriti' => $request->invoice_fee_sekuriti,
-                'invoice_exempt' => $request->invoice_exempt,
-                'invoice_exempt_reason' => $request->invoice_exempt_reason,
-                'invoice_manual_mode' => $request->invoice_manual_mode,
-                'invoice_manual_reason' => $request->invoice_manual_reason,
-            ],
-            'license' => [
-                'license_start_date' => $request->license_start_date,
-                'license_end_date' => $request->license_end_date,
-            ],
-        ]);
+
+        $workflowFields = [
+    'assigned_to_name',
+    'assigned_to_email',
+    'assigned_to_role',
+    'workflow_stage',
+
+    'head_remark',
+    'head_feedback',
+    'head_feedback_target',
+    'head_officer_name',
+    'head_officer_email',
+
+    'technical_feedback',
+    'technical_feedback_target',
+    'technical_feedback_target_name',
+    'technical_feedback_target_email',
+    'technical_officer_name',
+    'technical_officer_email',
+
+    'user_resubmission_required',
+    'resubmit_duration_days',
+    'resubmit_due_date',
+
+    'director_remark',
+    'director_feedback',
+    'director_decision',
+];
+
+$workflowData = [];
+
+foreach ($workflowFields as $field) {
+    if ($request->exists($field)) {
+        $workflowData[$field] = $request->input($field);
+    }
+}
+
+$reviewData = array_replace_recursive(
+    $existingReviewData,
+    $incomingReviewData,
+    $workflowData
+);
+
+$existingMeta = is_array($reviewData['meta'] ?? null)
+    ? $reviewData['meta']
+    : [];
+
+if ($request->exists('review_save_type')) {
+    $existingMeta['review_save_type'] =
+        $request->input('review_save_type');
+}
+
+if ($request->exists('report_status')) {
+    $existingMeta['report_status'] =
+        $request->input('report_status');
+}
+
+if ($request->exists('workflow_stage')) {
+    $existingMeta['workflow_stage'] =
+        $request->input('workflow_stage');
+}
+
+$existingMeta['reviewed_at'] = now()->toDateTimeString();
+$existingMeta['reviewed_by_user_id'] =
+    optional($request->user())->user_id;
+
+$reviewData['meta'] = $existingMeta;
+
+if ($request->exists('activity_reports')) {
+    $reviewData['activity_reports'] =
+        $request->input('activity_reports') ?? [];
+}
+
 
         $application->update([
             'application_status' => $request->application_status
@@ -409,7 +511,9 @@ class ApplicationController extends Controller
             'review_data' => $reviewData,
         ]);
 
+
         $fresh = $application->fresh();
+
 
         return response()->json([
             'success' => true,
@@ -419,18 +523,22 @@ class ApplicationController extends Controller
         ]);
     }
 
+
     /*
     |--------------------------------------------------------------------------
     | Helper
     |--------------------------------------------------------------------------
     */
 
+
     private function generateReferenceNo(): string
     {
         $latestId = LsankApplication::max('application_id') ?? 0;
 
+
         return 'FAIL-' . now()->format('Y') . '-' . str_pad($latestId + 1, 4, '0', STR_PAD_LEFT);
     }
+
 
     private function displayApplicationStatus(?string $status): string
     {
@@ -444,6 +552,7 @@ class ApplicationController extends Controller
         };
     }
 
+
     private function displayPaymentStatus(?string $status): string
     {
         return match ($status) {
@@ -454,19 +563,24 @@ class ApplicationController extends Controller
         };
     }
 
+
     private function formatApplication(?LsankApplication $application): array
     {
         if (!$application) {
             return [];
         }
 
+
         $draftData = is_array($application->draft_data)
             ? $application->draft_data
             : [];
 
+
         $splitBatchId = $draftData['split_batch_id'] ?? ($draftData['meta']['split_batch_id'] ?? null);
 
+
         $applicationRefNos = [$application->application_ref_no];
+
 
         if ($splitBatchId) {
             $applicationRefNos = LsankApplication::where('user_id', $application->user_id)
@@ -480,12 +594,14 @@ class ApplicationController extends Controller
                 ->all();
         }
 
+
         $processingInvoiceActivities =
             $draftData['processing_invoice_activities']
             ?? $draftData['original_selected_activities']
             ?? $draftData['selected_activities']
             ?? ($draftData['meta']['selected_activities'] ?? null)
             ?? [$application->activity_name ?? $application->activity_details ?? '-'];
+
 
         $invoiceItems = LsankInvoice::where('application_id', $application->application_id)
             ->latest('invoice_id')
@@ -506,10 +622,13 @@ class ApplicationController extends Controller
             ->values()
             ->all();
 
+
         $year = optional($application->created_at)->format('Y') ?? now()->format('Y');
         $runningNo = str_pad($application->application_id, 4, '0', STR_PAD_LEFT);
 
+
         $receiptItems = [];
+
 
         if (
             in_array($application->application_status, [
@@ -530,50 +649,61 @@ class ApplicationController extends Controller
             ];
         }
 
+
         return [
             'id' => $application->application_id,
             'application_id' => $application->application_id,
             'application_no' => $application->application_ref_no,
             'application_ref_no' => $application->application_ref_no,
 
+
             'application_ref_nos' => $applicationRefNos,
             'application_nos' => $applicationRefNos,
             'processing_invoice_activities' => $processingInvoiceActivities,
 
+
             'user_id' => $application->user_id,
             'applicant_id' => $application->applicant_id,
+
 
             'applicant_name' => $application->applicant_name
                 ?? optional($application->applicant)->applicant_name
                 ?? $application->company_name
                 ?? '-',
 
+
             'business_name' => $application->business_name
                 ?? $application->company_name
                 ?? optional(optional($application->applicant)->company)->company_name
                 ?? '-',
+
 
             'phone' => $application->phone
                 ?? $application->phone_no
                 ?? $application->business_phone
                 ?? '-',
 
+
             'email' => $application->email
                 ?? $application->business_email
                 ?? '-',
 
+
             'license_type' => $application->license_type
                 ?? $this->displayLicenseType($application),
+
 
             'activity_type' => $application->activity_type
                 ?? $application->activity_name
                 ?? optional($application->waterBody)->activity_details
                 ?? '-',
 
+
             'activity_name' => $application->activity_name
                 ?? $application->activity_type
                 ?? optional($application->waterBody)->activity_details
                 ?? '-',
+
 
             'activity_details' => $application->activity_details
                 ?? optional($application->waterBody)->activity_details
@@ -581,43 +711,55 @@ class ApplicationController extends Controller
                 ?? $application->activity_type
                 ?? '-',
 
+
             'activity_location' => $application->activity_location
                 ?? optional($application->waterBody)->activity_location
                 ?? '-',
 
+
             'district' => $application->district ?? '-',
+
 
             'application_type' => $application->application_type,
             'application_category' => $application->application_category,
 
+
             'status_code' => $application->application_status,
             'status' => $this->displayApplicationStatus($application->application_status),
+
 
             'application_status' => $application->application_status,
             'application_status_display' => $this->displayApplicationStatus($application->application_status),
 
+
             'payment_status' => $application->payment_status,
             'payment_status_display' => $this->displayPaymentStatus($application->payment_status),
+
 
             'current_step' => $application->current_step ?? 0,
             'draft_data' => $application->draft_data,
             'review_data' => $application->review_data,
             'submitted_data' => $application->submitted_data,
 
+
             'remarks' => $application->remarks,
+
 
             'submitted_at' => optional($application->submitted_at)->toDateTimeString(),
             'submitted_date' => optional(
                 $application->submitted_at ?? $application->created_at
             )->format('d M Y') ?? '-',
 
+
             'created_at' => optional($application->created_at)->toDateTimeString(),
             'updated_at' => optional($application->updated_at)->toDateTimeString(),
+
 
             'invoice_items' => $invoiceItems,
             'receipt_items' => $receiptItems,
         ];
     }
+
 
     private function displayLicenseType(LsankApplication $application): string
     {
@@ -630,6 +772,7 @@ class ApplicationController extends Controller
             return 'Aktiviti Badan Perairan';
         }
 
+
         if (
             $application->application_type === 'effluent' ||
             $application->application_category === 'effluent' ||
@@ -638,6 +781,7 @@ class ApplicationController extends Controller
         ) {
             return 'Aktiviti Pelepasan Efluen';
         }
+
 
         return '-';
     }

@@ -955,16 +955,59 @@ class WaterApplicationController extends Controller
                 ];
             }
 
-            $splitBatchId = $draftData['split_batch_id']
-                ?? 'WATER-BATCH-' . $application->application_id . '-' . now()->format('YmdHis');
+<<<<<<<<< Temporary merge branch 1
+            $splitBatchId =
+                $draftData['split_batch_id']
+                ?? (
+                    'WATER-BATCH-' .
+                    $application->application_id .
+                    '-' .
+                    now()->format('YmdHis')
+                );
 
-            $invoices = LsankInvoice::where('application_id', $application->application_id)
+            /*
+            * Ambil semua invois fi pemprosesan yang belum dibayar.
+            */
+            $invoices = LsankInvoice::query()
+                ->where(
+=========
+            $splitBatchId = $draftData['split_batch_id']
+                ?? 'WATER-BATCH-'
+                    . $application->application_id
+                    . '-'
+                    . now()->format('YmdHis');
+
+            $invoices = LsankInvoice::where(
+>>>>>>>>> Temporary merge branch 2
+                    'application_id',
+                    $application->application_id
+                )
                 ->where('status', 'unpaid')
                 ->orderBy('invoice_id')
+<<<<<<<<< Temporary merge branch 1
+                ->lockForUpdate()
                 ->get();
 
+            /*
+            * Jika bilangan invois tidak sama dengan bilangan aktiviti,
+            * bina semula invois fi pemprosesan.
+            */
+            if (
+                $invoices->count() <
+                count($selectedActivities)
+            ) {
+                LsankInvoice::query()
+                    ->where(
+=========
+                ->get()
+                ->values();
+
             if ($invoices->count() < count($selectedActivities)) {
-                LsankInvoice::where('application_id', $application->application_id)
+                LsankInvoice::where(
+>>>>>>>>> Temporary merge branch 2
+                        'application_id',
+                        $application->application_id
+                    )
                     ->where('status', 'unpaid')
                     ->delete();
 
@@ -1018,6 +1061,18 @@ class WaterApplicationController extends Controller
 
             $paidApplications = [];
             $paidInvoices = [];
+<<<<<<<<< Temporary merge branch 1
+            $paidReceipts = [];
+=========
+            $originalApplicationId = $application->application_id;
+>>>>>>>>> Temporary merge branch 2
+
+            /*
+            * Ambil running number pertama sekali sahaja.
+            * Setiap resit dalam transaksi ini menggunakan nombor seterusnya.
+            */
+            $startReceiptRunningNumber =
+                $this->nextReceiptRunningNumber();
 
             foreach (
                 $selectedActivities as $index => $activity
@@ -1035,7 +1090,22 @@ class WaterApplicationController extends Controller
                     $splitApplication->application_id = null;
                 }
 
-                $newDraftData = $this->waterDraftDataForActivity($draftData, $activity);
+<<<<<<<<< Temporary merge branch 1
+                $newDraftData =
+                    $this->waterDraftDataForActivity(
+                        $draftData,
+                        $activity
+                    );
+
+                $newDraftData['selected_activities'] = [
+                    $activity,
+                ];
+=========
+                $newDraftData = $this->waterDraftDataForActivity(
+                    $draftData,
+                    $activity
+                );
+
                 $newDraftData['selected_activities'] = [$activity];
                 $newDraftData['processing_invoice_activities'] = [$activity];
                 $newDraftData['original_selected_activities'] = $selectedActivities;
@@ -1045,7 +1115,36 @@ class WaterApplicationController extends Controller
                 $newDraftData['split_from_application_id'] = $application->application_id;
 
                 $splitApplication->draft_data = $newDraftData;
-                $splitApplication->current_step = $application->current_step ?? 0;
+                $splitApplication->submitted_data = $newDraftData;
+                $splitApplication->current_step =
+                    $application->current_step ?? 0;
+>>>>>>>>> Temporary merge branch 2
+
+                $newDraftData['processing_invoice_activities'] = [
+                    $activity,
+                ];
+
+<<<<<<<<< Temporary merge branch 1
+                $newDraftData['original_selected_activities'] =
+                    $selectedActivities;
+
+                $newDraftData['split_batch_id'] =
+                    $splitBatchId;
+
+                $newDraftData['is_split_child'] =
+                    true;
+
+                $newDraftData['is_split_parent'] =
+                    $index === 0;
+
+                $newDraftData['split_from_application_id'] =
+                    $application->application_id;
+
+                $splitApplication->draft_data =
+                    $newDraftData;
+
+                $splitApplication->current_step =
+                    $application->current_step ?? 0;
 
                 $splitApplication->activity_name =
                     $activity;
@@ -1056,18 +1155,51 @@ class WaterApplicationController extends Controller
                 $splitApplication->activity_details =
                     $activity;
 
-                $splitApplication->application_ref_no = $this->generateApplicationFileNo(
-                    $this->waterSectionCode($activity),
-                    $this->districtCode($application->district ?? null)
-                );
+                $splitApplication->application_ref_no =
+                    $this->generateApplicationFileNo(
+                        $this->waterSectionCode($activity),
+                        $this->districtCode(
+                            $application->district ?? null
+                        )
+                    );
+
+                $splitApplication->application_status_id =
+                    $statusId;
+
+                $splitApplication->application_status =
+                    LsankApplication::STATUS_DALAM_PROSES;
+
+                $splitApplication->payment_status =
+                    LsankApplication::PAYMENT_SUDAH_BAYAR;
+
+                $splitApplication->submitted_at =
+                    now();
+
+                $splitApplication->remarks = trim(
+                    (
+                        ($splitApplication->remarks ?? '') .
+                        "\nBayaran berjaya pada " .
+                        now()->format('d/m/Y H:i')
+                    )
+=========
+                $splitApplication->application_ref_no =
+                    $this->generateApplicationFileNo(
+                        $this->waterSectionCode($activity),
+                        $this->districtCode($application->district ?? null)
+                    );
 
                 $splitApplication->application_status_id = $statusId;
-                $splitApplication->application_status = LsankApplication::STATUS_DALAM_PROSES;
-                $splitApplication->payment_status = LsankApplication::PAYMENT_SUDAH_BAYAR;
+                $splitApplication->application_status =
+                    LsankApplication::STATUS_DALAM_PROSES;
+                $splitApplication->payment_status =
+                    LsankApplication::PAYMENT_SUDAH_BAYAR;
                 $splitApplication->submitted_at = now();
 
                 $splitApplication->remarks = trim(
-                    (($splitApplication->remarks ?? '') . "\nBayaran simulasi berjaya pada " . now()->format('d/m/Y H:i'))
+                    (($splitApplication->remarks ?? '')
+                        . "\nBayaran simulasi berjaya pada "
+                        . now()->format('d/m/Y H:i'))
+>>>>>>>>> Temporary merge branch 2
                 );
 
                 $splitApplication->save();
@@ -1077,7 +1209,13 @@ class WaterApplicationController extends Controller
                     $activity
                 );
 
-                $invoice = $invoices->values()->get($index);
+<<<<<<<<< Temporary merge branch 1
+                $invoice = $invoices
+                    ->values()
+                    ->get($index);
+=========
+                $invoice = $invoices->get($index);
+>>>>>>>>> Temporary merge branch 2
 
                 /*
                 * Safety fallback jika invois tiada.
@@ -1136,8 +1274,90 @@ class WaterApplicationController extends Controller
 
                 $invoice->save();
 
-                $paidApplications[] = $splitApplication;
-                $paidInvoices[] = $invoice;
+                /*
+                * Cari resit sedia ada berdasarkan invois.
+                * Ini mengelakkan resit berganda.
+                */
+                $receipt = LsankReceipt::query()
+                    ->where(
+                        'invoice_id',
+                        $invoice->invoice_id
+                    )
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$receipt) {
+                    $paymentType =
+                        $invoice->payment_type
+                        ?? 'Fi Pemprosesan';
+
+                    $feeTypeCode =
+                        $this->receiptFeeTypeCode(
+                            $paymentType
+                        );
+
+                    $receiptNo =
+                        $this->generateReceiptNoByRunningNumber(
+                            $startReceiptRunningNumber + $index,
+                            $feeTypeCode
+                        );
+
+                    $receipt = LsankReceipt::create([
+                        'receipt_no' =>
+                            $receiptNo,
+
+                        'invoice_id' =>
+                            $invoice->invoice_id,
+
+                        /*
+                        * Letakkan null jika table membenarkan null.
+                        * Jika payment_id wajib, cipta rekod payment
+                        * terlebih dahulu dan masukkan payment_id sebenar.
+                        */
+                        'payment_id' =>
+                            null,
+
+                        'receipt_date' =>
+                            now(),
+
+                        'amount' =>
+                            $invoice->total_amount,
+
+                        'receipt_pdf_path' =>
+                            null,
+
+                        'status' =>
+                            'paid',
+                    ]);
+                }
+
+                $paidApplications[] =
+                    $splitApplication;
+
+                $paidInvoices[] =
+                    $invoice;
+
+                $paidReceipts[] =
+                    $receipt;
+            }
+
+<<<<<<<<< Temporary merge branch 1
+            $firstApplication =
+                $paidApplications[0];
+
+            $firstInvoice =
+                $paidInvoices[0];
+
+            $firstReceipt =
+                $paidReceipts[0];
+
+            $receiptNos = collect($paidReceipts)
+                ->pluck('receipt_no')
+=========
+            if (empty($paidApplications) || empty($paidInvoices)) {
+                throw new \RuntimeException(
+                    'Tiada permohonan atau invois berjaya diproses.'
+                );
             }
 
             $firstApplication = $paidApplications[0];
@@ -1146,13 +1366,29 @@ class WaterApplicationController extends Controller
             $receiptNos = collect($paidApplications)
                 ->map(function ($item) {
                     $year = now()->format('Y');
-                    $runningNo = str_pad($item->application_id, 4, '0', STR_PAD_LEFT);
+                    $runningNo = str_pad(
+                        $item->application_id,
+                        4,
+                        '0',
+                        STR_PAD_LEFT
+                    );
 
-                    return 'RESIT-' . $year . '-' . $runningNo . '-01';
+                    return 'RESIT-'
+                        . $year
+                        . '-'
+                        . $runningNo
+                        . '-01';
                 })
+>>>>>>>>> Temporary merge branch 2
                 ->values()
                 ->all();
 
+                    'status' => LsankApplication::STATUS_DALAM_PROSES,
+                    'status_display' => 'Dalam Proses',
+                    'payment_status' =>
+                        LsankApplication::PAYMENT_SUDAH_BAYAR,
+                    'payment_status_display' => 'Sudah Bayar',
+                    'paid_at' => now()->toDateTimeString(),
             return response()->json([
                 'success' => true,
 
@@ -1173,9 +1409,18 @@ class WaterApplicationController extends Controller
                             ->pluck('application_id')
                             ->values()
                             ->all(),
+=========
+                    'application_no' =>
+                        $firstApplication->application_ref_no,
+                    'application_ref_no' =>
+                        $firstApplication->application_ref_no,
+>>>>>>>>> Temporary merge branch 2
 
-                    'application_no' => $firstApplication->application_ref_no,
-                    'application_ref_no' => $firstApplication->application_ref_no,
+                    'application_no' =>
+                        $firstApplication->application_ref_no,
+
+                    'application_ref_no' =>
+                        $firstApplication->application_ref_no,
 
                     'application_nos' =>
                         collect($paidApplications)
@@ -1243,11 +1488,28 @@ class WaterApplicationController extends Controller
                     'split_batch_id' =>
                         $splitBatchId,
 
+                    'status' =>
+                        LsankApplication::STATUS_DALAM_PROSES,
+
+                    'status_display' =>
+                        'Dalam Proses',
+
+                    'payment_status' =>
+                        LsankApplication::PAYMENT_SUDAH_BAYAR,
+
+                    'payment_status_display' =>
+                        'Sudah Bayar',
+
+                    'paid_at' =>
+                        now()->toDateTimeString(),
+=========
                     'status' => LsankApplication::STATUS_DALAM_PROSES,
                     'status_display' => 'Dalam Proses',
-                    'payment_status' => LsankApplication::PAYMENT_SUDAH_BAYAR,
+                    'payment_status' =>
+                        LsankApplication::PAYMENT_SUDAH_BAYAR,
                     'payment_status_display' => 'Sudah Bayar',
                     'paid_at' => now()->toDateTimeString(),
+>>>>>>>>> Temporary merge branch 2
                 ],
             ]);
         }, 3);
@@ -1467,6 +1729,49 @@ class WaterApplicationController extends Controller
             self::TYPE_NAME
         );
 
+<<<<<<<<< Temporary merge branch 1
+=========
+        $detail['id'] = $application->application_id;
+        $detail['application_id'] = $application->application_id;
+        $detail['application_no'] = $application->application_ref_no;
+        $detail['application_ref_no'] = $application->application_ref_no;
+
+        $detail['current_step'] = $application->current_step ?? 0;
+        $detail['draft_data'] = $application->draft_data ?? [];
+        $detail['review_data'] = $application->review_data ?? [];
+        $detail['submitted_data'] = $application->submitted_data ?? [];
+
+        $detail['applicant_type'] = $application->applicant_type;
+        $detail['applicant_name'] = $application->applicant_name;
+        $detail['identity_no'] = $application->identity_no;
+        $detail['email'] = $application->email;
+        $detail['phone_no'] = $application->phone_no;
+        $detail['phone'] = $application->phone;
+        $detail['address'] = $application->address;
+
+        $detail['company_name'] = $application->company_name;
+        $detail['business_name'] = $application->business_name;
+        $detail['registration_no'] = $application->registration_no;
+        $detail['business_address'] = $application->business_address;
+        $detail['business_phone'] = $application->business_phone;
+        $detail['business_email'] = $application->business_email;
+
+        $detail['responsible_officer_name'] = $application->responsible_officer_name;
+        $detail['responsible_officer_phone'] = $application->responsible_officer_phone;
+        $detail['responsible_officer_position'] = $application->responsible_officer_position;
+        $detail['officers'] = $application->officers ?? [];
+
+        $detail['activity_name'] = $application->activity_name;
+        $detail['activity_details'] = $application->activity_details;
+        $detail['district'] = $application->district;
+        $detail['activity_location'] = $application->activity_location;
+        $detail['longitude'] = $application->longitude;
+        $detail['latitude'] = $application->latitude;
+        $detail['operating_days'] = $application->operating_days;
+        $detail['operating_time'] = $application->operating_time;
+        $detail['recreation_details'] = $application->recreation_details ?? [];
+
+>>>>>>>>> Temporary merge branch 2
         $draftData = is_array($application->draft_data)
             ? $application->draft_data
             : [];

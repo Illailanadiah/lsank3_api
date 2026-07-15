@@ -632,6 +632,72 @@ class EffluentApplicationController extends Controller
             STR_PAD_LEFT
         );
 
+        $detail['id'] = $application->application_id;
+        $detail['application_id'] = $application->application_id;
+        $detail['application_no'] = $application->application_ref_no;
+        $detail['application_ref_no'] = $application->application_ref_no;
+
+        $detail['current_step'] = $application->current_step ?? 0;
+        $detail['draft_data'] = $application->draft_data ?? [];
+        $detail['review_data'] = $application->review_data ?? [];
+        $detail['submitted_data'] = $application->submitted_data ?? [];
+
+        $detail['applicant_type'] = $application->applicant_type;
+        $detail['applicant_name'] = $application->applicant_name;
+        $detail['identity_no'] = $application->identity_no;
+        $detail['email'] = $application->email;
+        $detail['phone_no'] = $application->phone_no;
+        $detail['phone'] = $application->phone;
+        $detail['address'] = $application->address;
+
+        $detail['company_name'] = $application->company_name;
+        $detail['business_name'] = $application->business_name;
+        $detail['registration_no'] = $application->registration_no;
+        $detail['business_address'] = $application->business_address;
+        $detail['business_phone'] = $application->business_phone;
+        $detail['business_email'] = $application->business_email;
+
+        $detail['responsible_officer_name'] = $application->responsible_officer_name;
+        $detail['responsible_officer_phone'] = $application->responsible_officer_phone;
+        $detail['responsible_officer_position'] = $application->responsible_officer_position;
+        $detail['officers'] = $application->officers ?? [];
+
+        $detail['activity_name'] = $application->activity_name;
+        $detail['activity_details'] = $application->activity_details;
+        $detail['district'] = $application->district;
+        $detail['activity_location'] = $application->activity_location;
+        $detail['longitude'] = $application->longitude;
+        $detail['latitude'] = $application->latitude;
+
+        $detail['service_type_id'] = optional($application->effluent)->service_type_id;
+        $detail['service_name'] = optional(optional($application->effluent)->serviceType)->service_name;
+        $detail['service_code'] = optional(optional($application->effluent)->serviceType)->service_code;
+
+        $detail['composition'] = optional($application->effluent)->composition;
+        $detail['frequency'] = optional($application->effluent)->frequency;
+        $detail['flow_rate'] = optional($application->effluent)->flow_rate;
+        $detail['sampling_method'] = optional($application->effluent)->sampling_method;
+        $detail['contingency_plan'] = optional($application->effluent)->contingency_plan;
+        $detail['disposal_method'] = optional($application->effluent)->disposal_method;
+
+        $invoiceItems = LsankInvoice::where('application_id', $application->application_id)
+            ->latest('invoice_id')
+            ->get()
+            ->map(function ($invoice) {
+                return [
+                    'invoice_id' => $invoice->invoice_id,
+                    'invoice_no' => $invoice->invoice_no,
+                    'payment_type' => 'Fi Pemprosesan',
+                    'amount' => (float) $invoice->total_amount,
+                    'amount_display' => 'RM ' . number_format($invoice->total_amount, 2),
+                    'invoice_date' => optional($invoice->invoice_date)->format('d/m/Y') ?? '-',
+                    'due_date' => optional($invoice->due_date)->format('d/m/Y') ?? '-',
+                    'status' => $invoice->status,
+                    'paid' => $invoice->status === 'paid',
+                ];
+            })
+            ->values()
+            ->all();
         $paidInvoice = collect($invoiceItems)
             ->firstWhere('paid', true);
 
@@ -782,6 +848,11 @@ class EffluentApplicationController extends Controller
             LsankApplication::PAYMENT_SUDAH_BAYAR;
 
         $application->submitted_at = now();
+<<<<<<<<< Temporary merge branch 1
+        $application->save();
+=========
+        $application->submitted_data = $application->draft_data;
+>>>>>>>>> Temporary merge branch 2
 
         $application->remarks = trim(
             (($application->remarks ?? '') . "\nBayaran simulasi berjaya pada " . now()->format('d/m/Y H:i'))

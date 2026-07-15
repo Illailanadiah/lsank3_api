@@ -256,6 +256,7 @@ class EffluentApplicationController extends Controller
 
             'current_step' => ['nullable', 'integer'],
             'draft_data' => ['nullable', 'array'],
+            'submitted_data' => ['nullable', 'array'],
             'officers' => ['nullable', 'array'],
         ]);
 
@@ -298,11 +299,14 @@ class EffluentApplicationController extends Controller
                     'license_type' => self::TYPE_NAME,
                     'application_type' => 'effluent',
                     'application_category' => 'new',
+                    'activity_type' => $this->effluentServiceName($validated['service_type_id'] ?? null),
+                    'activity_name' => $this->effluentServiceName($validated['service_type_id'] ?? null),
+                    'activity_details' => $this->effluentServiceName($validated['service_type_id'] ?? null),
 
                     'payment_status' => 'belum_bayar',
                     'application_status' => 'draf',
                     'current_step' => $validated['current_step'] ?? 0,
-                    'draft_data' => $validated['draft_data'] ?? $validated,
+                    'draft_data' => $this->normalizeEffluentDraftData($validated, $application ?? null),
 
                     'applicant_type' => $validated['applicant_type'] ?? null,
                     'identity_no' => $validated['identity_no'] ?? null,
@@ -317,6 +321,7 @@ class EffluentApplicationController extends Controller
                     'responsible_officer_name' => $validated['responsible_officer_name'] ?? null,
                     'responsible_officer_phone' => $validated['responsible_officer_phone'] ?? null,
                     'responsible_officer_position' => $validated['responsible_officer_position'] ?? null,
+                    'officers' => $validated['officers'] ?? [],
 
                     'district' => $validated['district'] ?? null,
                     'activity_location' => $validated['activity_location'] ?? null,
@@ -336,7 +341,7 @@ class EffluentApplicationController extends Controller
                 'email' => $validated['email'] ?? $application->email,
 
                 'current_step' => $validated['current_step'] ?? $application->current_step,
-                'draft_data' => $validated['draft_data'] ?? $application->draft_data,
+                'draft_data' => $this->normalizeEffluentDraftData($validated, $application),
 
                 'applicant_type' => $validated['applicant_type'] ?? $application->applicant_type,
                 'identity_no' => $validated['identity_no'] ?? $application->identity_no,
@@ -357,6 +362,10 @@ class EffluentApplicationController extends Controller
                 'activity_location' => $validated['activity_location'] ?? $application->activity_location,
                 'longitude' => $validated['longitude'] ?? $application->longitude,
                 'latitude' => $validated['latitude'] ?? $application->latitude,
+                'activity_type' => $this->effluentServiceName($validated['service_type_id'] ?? null) ?? $application->activity_type,
+                'activity_name' => $this->effluentServiceName($validated['service_type_id'] ?? null) ?? $application->activity_name,
+                'activity_details' => $this->effluentServiceName($validated['service_type_id'] ?? null) ?? $application->activity_details,
+                'officers' => $validated['officers'] ?? $application->officers,
             ]);
                 $applicant = $application->applicant;
 
@@ -623,6 +632,72 @@ class EffluentApplicationController extends Controller
             STR_PAD_LEFT
         );
 
+        $detail['id'] = $application->application_id;
+        $detail['application_id'] = $application->application_id;
+        $detail['application_no'] = $application->application_ref_no;
+        $detail['application_ref_no'] = $application->application_ref_no;
+
+        $detail['current_step'] = $application->current_step ?? 0;
+        $detail['draft_data'] = $application->draft_data ?? [];
+        $detail['review_data'] = $application->review_data ?? [];
+        $detail['submitted_data'] = $application->submitted_data ?? [];
+
+        $detail['applicant_type'] = $application->applicant_type;
+        $detail['applicant_name'] = $application->applicant_name;
+        $detail['identity_no'] = $application->identity_no;
+        $detail['email'] = $application->email;
+        $detail['phone_no'] = $application->phone_no;
+        $detail['phone'] = $application->phone;
+        $detail['address'] = $application->address;
+
+        $detail['company_name'] = $application->company_name;
+        $detail['business_name'] = $application->business_name;
+        $detail['registration_no'] = $application->registration_no;
+        $detail['business_address'] = $application->business_address;
+        $detail['business_phone'] = $application->business_phone;
+        $detail['business_email'] = $application->business_email;
+
+        $detail['responsible_officer_name'] = $application->responsible_officer_name;
+        $detail['responsible_officer_phone'] = $application->responsible_officer_phone;
+        $detail['responsible_officer_position'] = $application->responsible_officer_position;
+        $detail['officers'] = $application->officers ?? [];
+
+        $detail['activity_name'] = $application->activity_name;
+        $detail['activity_details'] = $application->activity_details;
+        $detail['district'] = $application->district;
+        $detail['activity_location'] = $application->activity_location;
+        $detail['longitude'] = $application->longitude;
+        $detail['latitude'] = $application->latitude;
+
+        $detail['service_type_id'] = optional($application->effluent)->service_type_id;
+        $detail['service_name'] = optional(optional($application->effluent)->serviceType)->service_name;
+        $detail['service_code'] = optional(optional($application->effluent)->serviceType)->service_code;
+
+        $detail['composition'] = optional($application->effluent)->composition;
+        $detail['frequency'] = optional($application->effluent)->frequency;
+        $detail['flow_rate'] = optional($application->effluent)->flow_rate;
+        $detail['sampling_method'] = optional($application->effluent)->sampling_method;
+        $detail['contingency_plan'] = optional($application->effluent)->contingency_plan;
+        $detail['disposal_method'] = optional($application->effluent)->disposal_method;
+
+        $invoiceItems = LsankInvoice::where('application_id', $application->application_id)
+            ->latest('invoice_id')
+            ->get()
+            ->map(function ($invoice) {
+                return [
+                    'invoice_id' => $invoice->invoice_id,
+                    'invoice_no' => $invoice->invoice_no,
+                    'payment_type' => 'Fi Pemprosesan',
+                    'amount' => (float) $invoice->total_amount,
+                    'amount_display' => 'RM ' . number_format($invoice->total_amount, 2),
+                    'invoice_date' => optional($invoice->invoice_date)->format('d/m/Y') ?? '-',
+                    'due_date' => optional($invoice->due_date)->format('d/m/Y') ?? '-',
+                    'status' => $invoice->status,
+                    'paid' => $invoice->status === 'paid',
+                ];
+            })
+            ->values()
+            ->all();
         $paidInvoice = collect($invoiceItems)
             ->firstWhere('paid', true);
 
@@ -773,6 +848,7 @@ class EffluentApplicationController extends Controller
             LsankApplication::PAYMENT_SUDAH_BAYAR;
 
         $application->submitted_at = now();
+        $application->submitted_data = $application->draft_data;
         $application->save();
 
         $application->remarks = trim(
@@ -877,6 +953,123 @@ public function destroyDraft(Request $request, LsankApplication $application)
         ]);
     });
 }
+
+    private function normalizeEffluentDraftData(array $validated, ?LsankApplication $application = null): array
+    {
+        $incoming = $validated['draft_data'] ?? [];
+
+        if (!is_array($incoming)) {
+            $incoming = [];
+        }
+
+        $existing = ($application && is_array($application->draft_data))
+            ? $application->draft_data
+            : [];
+
+        $draftData = array_replace_recursive($existing, $incoming);
+
+        $controllers = $draftData['controllers'] ?? [];
+        if (!is_array($controllers)) {
+            $controllers = [];
+        }
+
+        $serviceName = $this->effluentServiceName($validated['service_type_id'] ?? null)
+            ?? ($draftData['selected_service_name'] ?? ($draftData['meta']['selected_service_name'] ?? null));
+
+        $draftData['meta'] = array_replace_recursive($draftData['meta'] ?? [], [
+            'module' => 'effluent',
+            'step' => $validated['current_step'] ?? ($draftData['step'] ?? ($draftData['meta']['step'] ?? 0)),
+            'current_step' => $validated['current_step'] ?? ($draftData['current_step'] ?? ($draftData['meta']['current_step'] ?? 0)),
+            'applicant_type' => $validated['applicant_type'] ?? ($draftData['applicant_type'] ?? null),
+            'selected_service_type_id' => $validated['service_type_id'] ?? ($draftData['selected_service_type_id'] ?? null),
+            'selected_service_name' => $serviceName,
+            'selected_fasa' => $draftData['selected_fasa'] ?? ($draftData['meta']['selected_fasa'] ?? null),
+            'sampling_at_discharge' => $validated['sampling_method'] ?? ($draftData['sampling_at_discharge'] ?? null),
+        ]);
+
+        $draftData['borang_a'] = array_replace_recursive($draftData['borang_a'] ?? [], [
+            'pemohon' => [
+                'applicant_type' => $validated['applicant_type'] ?? null,
+                'applicant_name' => $validated['applicant_name'] ?? null,
+                'identity_no' => $validated['identity_no'] ?? null,
+                'phone' => $validated['phone_no'] ?? $validated['phone'] ?? null,
+                'email' => $validated['email'] ?? null,
+                'address' => $validated['address'] ?? null,
+            ],
+            'perniagaan' => [
+                'business_name' => $validated['company_name'] ?? null,
+                'registration_no' => $validated['registration_no'] ?? null,
+                'business_address' => $validated['business_address'] ?? null,
+                'business_phone' => $validated['business_phone'] ?? null,
+                'business_email' => $validated['business_email'] ?? null,
+                'district' => $validated['district'] ?? null,
+            ],
+            'officers' => $validated['officers'] ?? ($draftData['officers'] ?? []),
+        ]);
+
+        $draftData['borang_c'] = array_replace_recursive($draftData['borang_c'] ?? [], [
+            'officer' => [
+                'name' => $controllers['Nama Pegawai Bertanggungjawab'] ?? $validated['responsible_officer_name'] ?? null,
+                'ic_no' => $controllers['No Kad Pengenalan Pegawai'] ?? null,
+                'phone' => $controllers['No Telefon Pegawai Yang Boleh Dihubungi'] ?? $validated['responsible_officer_phone'] ?? null,
+            ],
+            'activity' => [
+                'service_type_id' => $validated['service_type_id'] ?? null,
+                'service_name' => $serviceName,
+                'composition' => $validated['composition'] ?? null,
+                'frequency' => $validated['frequency'] ?? null,
+                'flow_rate' => $validated['flow_rate'] ?? null,
+                'sampling_method' => $validated['sampling_method'] ?? null,
+                'disposal_method' => $validated['disposal_method'] ?? null,
+            ],
+            'location' => [
+                'search' => $validated['activity_location'] ?? ($controllers['Carian Lokasi'] ?? null),
+                'longitude' => $validated['longitude'] ?? ($controllers['Longitud'] ?? null),
+                'latitude' => $validated['latitude'] ?? ($controllers['Latitud'] ?? null),
+            ],
+        ]);
+
+        $draftData['borang_d'] = array_replace_recursive($draftData['borang_d'] ?? [], [
+            'consultant_company' => [
+                'name' => $controllers['borang_d_nama_syarikat'] ?? null,
+                'registration_no' => $controllers['borang_d_no_pendaftaran_syarikat'] ?? null,
+                'address' => $controllers['borang_d_alamat_syarikat'] ?? null,
+                'city' => $controllers['borang_d_bandar_syarikat'] ?? null,
+                'postcode' => $controllers['borang_d_poskod_syarikat'] ?? null,
+            ],
+            'sampling' => [
+                'date' => $controllers['borang_d_tarikh'] ?? null,
+                'time' => $controllers['borang_d_masa'] ?? null,
+                'location' => $controllers['borang_d_lokasi_persampelan_Carian Lokasi'] ?? null,
+                'longitude' => $controllers['borang_d_lokasi_persampelan_Longitud'] ?? null,
+                'latitude' => $controllers['borang_d_lokasi_persampelan_Latitud'] ?? null,
+            ],
+            'chemist' => [
+                'name' => $controllers['borang_d_nama_ahli_kimia'] ?? null,
+                'registration_no' => $controllers['borang_d_no_pendaftaran_ahli_kimia'] ?? null,
+                'address' => $controllers['borang_d_alamat_ahli_kimia'] ?? null,
+                'phone' => $controllers['borang_d_no_telefon_ahli_kimia'] ?? null,
+                'email' => $controllers['borang_d_email_ahli_kimia'] ?? null,
+            ],
+        ]);
+
+        $draftData['documents'] = array_replace_recursive($draftData['documents'] ?? [], [
+            'uploaded_keys' => $draftData['uploaded_documents'] ?? ($draftData['documents']['uploaded_keys'] ?? []),
+        ]);
+        $draftData['controllers'] = $controllers;
+
+        return $draftData;
+    }
+
+    private function effluentServiceName(?int $serviceTypeId): ?string
+    {
+        if (!$serviceTypeId) {
+            return null;
+        }
+
+        return LsankServiceType::where('service_type_id', $serviceTypeId)
+            ->value('service_name');
+    }
 
     private function calculateEffluentFees(LsankApplication $application): array
     {

@@ -338,6 +338,7 @@ class WaterApplicationController extends Controller
 
             'current_step' => ['nullable', 'integer'],
             'draft_data' => ['nullable', 'array'],
+            'submitted_data' => ['nullable', 'array'],
         ]);
 
         $user = $request->user();
@@ -437,7 +438,7 @@ class WaterApplicationController extends Controller
             }
 
             $application->current_step = $validated['current_step'] ?? 0;
-            $application->draft_data = $validated['draft_data'] ?? $request->all();
+            $application->draft_data = $this->normalizeWaterDraftData($validated, $request, $application);
             $application->remarks = null;
 
             $application->license_type = self::TYPE_NAME;
@@ -954,6 +955,13 @@ class WaterApplicationController extends Controller
                 ];
             }
 
+            $splitBatchId = $draftData['split_batch_id']
+                ?? 'WATER-BATCH-'
+                    . $application->application_id
+                    . '-'
+                    . now()->format('YmdHis');
+
+            $invoices = LsankInvoice::where(
             $splitBatchId =
                 $draftData['split_batch_id']
                 ?? (
@@ -973,6 +981,11 @@ class WaterApplicationController extends Controller
                 )
                 ->where('status', 'unpaid')
                 ->orderBy('invoice_id')
+                ->get()
+                ->values();
+
+            if ($invoices->count() < count($selectedActivities)) {
+                LsankInvoice::where(
                 ->lockForUpdate()
                 ->get();
 
@@ -1036,10 +1049,15 @@ class WaterApplicationController extends Controller
 
                     $invoices->push($invoice);
                 }
+
+                $invoices = $invoices->values();
             }
 
             $paidApplications = [];
             $paidInvoices = [];
+            $originalApplicationId = $application->application_id;
+
+            foreach ($selectedActivities as $index => $activity) {
             $paidReceipts = [];
 
             /*
@@ -1065,6 +1083,47 @@ class WaterApplicationController extends Controller
                     $splitApplication->application_id = null;
                 }
 
+                $newDraftData = $this->waterDraftDataForActivity(
+                    $draftData,
+                    $activity
+                );
+
+                $newDraftData['selected_activities'] = [$activity];
+                $newDraftData['processing_invoice_activities'] = [$activity];
+                $newDraftData['original_selected_activities'] =
+                    $selectedActivities;
+                $newDraftData['split_batch_id'] = $splitBatchId;
+                $newDraftData['is_split_child'] = true;
+                $newDraftData['is_split_parent'] = $index === 0;
+                $newDraftData['split_from_application_id'] =
+                    $originalApplicationId;
+
+                $splitApplication->draft_data = $newDraftData;
+                $splitApplication->submitted_data = $newDraftData;
+                $splitApplication->current_step =
+                    $application->current_step ?? 0;
+
+                $splitApplication->activity_name = $activity;
+                $splitApplication->activity_type = $activity;
+                $splitApplication->activity_details = $activity;
+
+                $splitApplication->application_ref_no =
+                    $this->generateApplicationFileNo(
+                        $this->waterSectionCode($activity),
+                        $this->districtCode($application->district ?? null)
+                    );
+
+                $splitApplication->application_status_id = $statusId;
+                $splitApplication->application_status =
+                    LsankApplication::STATUS_DALAM_PROSES;
+                $splitApplication->payment_status =
+                    LsankApplication::PAYMENT_SUDAH_BAYAR;
+                $splitApplication->submitted_at = now();
+
+                $splitApplication->remarks = trim(
+                    (($splitApplication->remarks ?? '')
+                        . "\nBayaran simulasi berjaya pada "
+                        . now()->format('d/m/Y H:i'))
                 $newDraftData =
                     $this->waterDraftDataForActivity(
                         $draftData,
@@ -1144,6 +1203,7 @@ class WaterApplicationController extends Controller
                     $activity
                 );
 
+                $invoice = $invoices->get($index);
                 $invoice = $invoices
                     ->values()
                     ->get($index);
@@ -1217,6 +1277,33 @@ class WaterApplicationController extends Controller
                     ->lockForUpdate()
                     ->first();
 
+            if (empty($paidApplications) || empty($paidInvoices)) {
+                throw new \RuntimeException(
+                    'Tiada permohonan atau invois berjaya diproses.'
+                );
+            }
+
+            $firstApplication = $paidApplications[0];
+            $firstInvoice = $paidInvoices[0];
+
+            $receiptNos = collect($paidApplications)
+                ->map(function ($item) {
+                    $year = now()->format('Y');
+                    $runningNo = str_pad(
+                        $item->application_id,
+                        4,
+                        '0',
+                        STR_PAD_LEFT
+                    );
+
+                    return 'RESIT-'
+                        . $year
+                        . '-'
+                        . $runningNo
+                        . '-01';
+                })
+                ->values()
+                ->all();
                 if (!$receipt) {
                     $paymentType =
                         $invoice->payment_type
@@ -1240,6 +1327,10 @@ class WaterApplicationController extends Controller
                         'invoice_id' =>
                             $invoice->invoice_id,
 
+                    'application_no' =>
+                        $firstApplication->application_ref_no,
+                    'application_ref_no' =>
+                        $firstApplication->application_ref_no,
                         /*
                         * Letakkan null jika table membenarkan null.
                         * Jika payment_id wajib, cipta rekod payment
@@ -1286,6 +1377,12 @@ class WaterApplicationController extends Controller
                 ->values()
                 ->all();
 
+                    'status' => LsankApplication::STATUS_DALAM_PROSES,
+                    'status_display' => 'Dalam Proses',
+                    'payment_status' =>
+                        LsankApplication::PAYMENT_SUDAH_BAYAR,
+                    'payment_status_display' => 'Sudah Bayar',
+                    'paid_at' => now()->toDateTimeString(),
             return response()->json([
                 'success' => true,
 
@@ -1431,6 +1528,8 @@ class WaterApplicationController extends Controller
             'non_motorized_fee' => ['nullable', 'numeric'],
             'activity_details' => ['nullable', 'string'],
             'recreation_details' => ['nullable', 'array'],
+            'current_step' => ['nullable', 'integer'],
+            'draft_data' => ['nullable', 'array'],
         ]);
 
         $user = $request->user();
@@ -1532,6 +1631,8 @@ class WaterApplicationController extends Controller
                 'operating_time' => $validated['operating_time'] ?? null,
                 'activity_details' => $validated['activity_details'] ?? null,
                 'recreation_details' => $validated['recreation_details'] ?? [],
+                'current_step' => $validated['current_step'] ?? 0,
+                'draft_data' => $this->normalizeWaterDraftData($validated, request()),
             ]);
 
             LsankWaterBodyApplication::create([
@@ -1607,6 +1708,46 @@ class WaterApplicationController extends Controller
             $application,
             self::TYPE_NAME
         );
+
+        $detail['id'] = $application->application_id;
+        $detail['application_id'] = $application->application_id;
+        $detail['application_no'] = $application->application_ref_no;
+        $detail['application_ref_no'] = $application->application_ref_no;
+
+        $detail['current_step'] = $application->current_step ?? 0;
+        $detail['draft_data'] = $application->draft_data ?? [];
+        $detail['review_data'] = $application->review_data ?? [];
+        $detail['submitted_data'] = $application->submitted_data ?? [];
+
+        $detail['applicant_type'] = $application->applicant_type;
+        $detail['applicant_name'] = $application->applicant_name;
+        $detail['identity_no'] = $application->identity_no;
+        $detail['email'] = $application->email;
+        $detail['phone_no'] = $application->phone_no;
+        $detail['phone'] = $application->phone;
+        $detail['address'] = $application->address;
+
+        $detail['company_name'] = $application->company_name;
+        $detail['business_name'] = $application->business_name;
+        $detail['registration_no'] = $application->registration_no;
+        $detail['business_address'] = $application->business_address;
+        $detail['business_phone'] = $application->business_phone;
+        $detail['business_email'] = $application->business_email;
+
+        $detail['responsible_officer_name'] = $application->responsible_officer_name;
+        $detail['responsible_officer_phone'] = $application->responsible_officer_phone;
+        $detail['responsible_officer_position'] = $application->responsible_officer_position;
+        $detail['officers'] = $application->officers ?? [];
+
+        $detail['activity_name'] = $application->activity_name;
+        $detail['activity_details'] = $application->activity_details;
+        $detail['district'] = $application->district;
+        $detail['activity_location'] = $application->activity_location;
+        $detail['longitude'] = $application->longitude;
+        $detail['latitude'] = $application->latitude;
+        $detail['operating_days'] = $application->operating_days;
+        $detail['operating_time'] = $application->operating_time;
+        $detail['recreation_details'] = $application->recreation_details ?? [];
 
         $draftData = is_array($application->draft_data)
             ? $application->draft_data
@@ -2182,25 +2323,179 @@ class WaterApplicationController extends Controller
         });
     }
 
+    private function normalizeWaterDraftData(array $validated, Request $request, ?LsankApplication $application = null): array
+    {
+        $incoming = $validated['draft_data'] ?? $request->input('draft_data') ?? [];
+
+        if (!is_array($incoming)) {
+            $incoming = [];
+        }
+
+        $existing = ($application && is_array($application->draft_data))
+            ? $application->draft_data
+            : [];
+
+        $draftData = array_replace_recursive($existing, $incoming);
+
+        $selectedActivities = $draftData['selected_activities']
+            ?? ($draftData['meta']['selected_activities'] ?? null)
+            ?? $this->normalizeStringList($validated['activity_details'] ?? null);
+
+        if (!is_array($selectedActivities) || empty($selectedActivities)) {
+            $selectedActivities = [$validated['activity_name'] ?? 'Aktiviti Rekreasi Sukan Air'];
+        }
+
+        $selectedActivities = collect($selectedActivities)
+            ->map(fn ($item) => trim((string) $item))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        $controllers = $draftData['controllers'] ?? [];
+        if (!is_array($controllers)) {
+            $controllers = [];
+        }
+
+        $recreationDetails = $draftData['recreation_details']
+            ?? ($draftData['borang_c']['recreation_details'] ?? ($validated['recreation_details'] ?? []));
+
+        $vesselDetails = $draftData['vessel_details']
+            ?? ($draftData['borang_d']['vessel_details'] ?? []);
+
+        $cageDetails = $draftData['cage_details']
+            ?? ($draftData['borang_f'] ?? []);
+
+        $constructionDetails = $draftData['construction_details']
+            ?? ($draftData['borang_g'] ?? []);
+
+        $licenseDurationYear = $draftData['license_duration_year']
+            ?? ($draftData['meta']['license_duration_year'] ?? 1);
+
+        $draftData['meta'] = array_replace_recursive($draftData['meta'] ?? [], [
+            'module' => 'water',
+            'step' => $validated['current_step'] ?? ($draftData['step'] ?? ($draftData['meta']['step'] ?? 0)),
+            'current_step' => $validated['current_step'] ?? ($draftData['current_step'] ?? ($draftData['meta']['current_step'] ?? 0)),
+            'selected_activities' => $selectedActivities,
+            'applicant_type' => $validated['applicant_type'] ?? ($draftData['applicant_type'] ?? null),
+            'is_one_off' => $draftData['is_one_off'] ?? ($draftData['meta']['is_one_off'] ?? false),
+            'license_duration_year' => $licenseDurationYear,
+        ]);
+
+        $draftData['selected_activities'] = $selectedActivities;
+        $draftData['recreation_details'] = is_array($recreationDetails) ? $recreationDetails : [];
+        $draftData['vessel_details'] = is_array($vesselDetails) ? $vesselDetails : [];
+        $draftData['cage_details'] = is_array($cageDetails) ? $cageDetails : [];
+        $draftData['construction_details'] = is_array($constructionDetails) ? $constructionDetails : [];
+
+        $draftData['borang_a'] = array_replace_recursive($draftData['borang_a'] ?? [], [
+            'pemohon' => [
+                'applicant_type' => $validated['applicant_type'] ?? null,
+                'applicant_name' => $validated['applicant_name'] ?? null,
+                'identity_no' => $validated['identity_no'] ?? null,
+                'phone' => $validated['phone_no'] ?? $validated['phone'] ?? null,
+                'email' => $validated['email'] ?? null,
+                'address' => $validated['address'] ?? null,
+            ],
+            'perniagaan' => [
+                'business_name' => $validated['company_name'] ?? null,
+                'registration_no' => $validated['registration_no'] ?? null,
+                'business_address' => $validated['business_address'] ?? null,
+                'business_phone' => $validated['business_phone'] ?? null,
+                'business_email' => $validated['business_email'] ?? null,
+                'district' => $validated['district'] ?? null,
+            ],
+            'officers' => $validated['officers'] ?? ($draftData['officers'] ?? []),
+        ]);
+
+        $draftData['borang_c'] = array_replace_recursive($draftData['borang_c'] ?? [], [
+            'recreation_details' => $draftData['recreation_details'],
+            'location' => [
+                'search' => $controllers['borang_c_location_search'] ?? $validated['activity_location'] ?? null,
+                'longitude' => $controllers['borang_c_longitude'] ?? $validated['longitude'] ?? null,
+                'latitude' => $controllers['borang_c_latitude'] ?? $validated['latitude'] ?? null,
+            ],
+            'operation' => [
+                'days' => $controllers['borang_c_operating_days'] ?? $validated['operating_days'] ?? null,
+                'start_time' => $controllers['borang_c_start_time'] ?? null,
+                'end_time' => $controllers['borang_c_end_time'] ?? null,
+            ],
+        ]);
+
+        $draftData['borang_d'] = array_replace_recursive($draftData['borang_d'] ?? [], [
+            'vessel_details' => $draftData['vessel_details'],
+            'vessel_types_by_index' => $draftData['vessel_types_by_index'] ?? [],
+            'location' => [
+                'search' => $controllers['borang_d_location_search'] ?? null,
+                'longitude' => $controllers['borang_d_longitude'] ?? null,
+                'latitude' => $controllers['borang_d_latitude'] ?? null,
+            ],
+            'operation' => [
+                'days' => $controllers['borang_d_operating_days'] ?? null,
+                'start_time' => $controllers['borang_d_start_time'] ?? null,
+                'end_time' => $controllers['borang_d_end_time'] ?? null,
+                'note' => $controllers['borang_d_operation_note'] ?? null,
+            ],
+        ]);
+
+        $draftData['borang_f'] = $draftData['cage_details'];
+        $draftData['borang_g'] = $draftData['construction_details'];
+        $draftData['documents'] = array_replace_recursive($draftData['documents'] ?? [], [
+            'uploaded_keys' => $draftData['uploaded_documents'] ?? ($draftData['documents']['uploaded_keys'] ?? []),
+        ]);
+        $draftData['controllers'] = $controllers;
+
+        return $draftData;
+    }
+
+    private function normalizeStringList(?string $value): array
+    {
+        if ($value === null || trim($value) === '') {
+            return [];
+        }
+
+        return collect(preg_split('/[,;\/]/', $value))
+            ->map(fn ($item) => trim((string) $item))
+            ->filter()
+            ->values()
+            ->all();
+    }
+
     private function waterDraftDataForActivity(array $draftData, string $activity): array
     {
         $draftData['selected_activities'] = [$activity];
 
+        if (isset($draftData['meta']) && is_array($draftData['meta'])) {
+            $draftData['meta']['selected_activities'] = [$activity];
+        }
+
         if ($activity !== 'Aktiviti Rekreasi Sukan Air') {
             $draftData['recreation_details'] = [];
+            if (isset($draftData['borang_c'])) {
+                $draftData['borang_c'] = [];
+            }
         }
 
         if ($activity !== 'Aktiviti Vesel Rekreasi') {
             $draftData['vessel_details'] = [];
             $draftData['vessel_types_by_index'] = [];
+            if (isset($draftData['borang_d'])) {
+                $draftData['borang_d'] = [];
+            }
         }
 
         if ($activity !== 'Aktiviti Sangkar') {
             $draftData['cage_details'] = [];
+            if (isset($draftData['borang_f'])) {
+                $draftData['borang_f'] = [];
+            }
         }
 
         if ($activity !== 'Aktiviti Binaan') {
             $draftData['construction_details'] = [];
+            if (isset($draftData['borang_g'])) {
+                $draftData['borang_g'] = [];
+            }
         }
 
         return $draftData;
@@ -2236,15 +2531,19 @@ class WaterApplicationController extends Controller
             ? $application->draft_data
             : [];
 
-        $isOneOff = ($draftData['is_one_off'] ?? false) === true;
+        $meta = is_array($draftData['meta'] ?? null) ? $draftData['meta'] : [];
 
-        $selectedActivities = $draftData['selected_activities'] ?? [];
+        $isOneOff = (($draftData['is_one_off'] ?? $meta['is_one_off'] ?? false) === true);
+
+        $selectedActivities = $draftData['selected_activities']
+            ?? $meta['selected_activities']
+            ?? [];
 
         if (!is_array($selectedActivities)) {
             $selectedActivities = [];
         }
 
-        $licenseDurationYear = (int) ($draftData['license_duration_year'] ?? 1);
+        $licenseDurationYear = (int) ($draftData['license_duration_year'] ?? $meta['license_duration_year'] ?? 1);
 
         if ($licenseDurationYear < 1) {
             $licenseDurationYear = 1;
@@ -2315,7 +2614,8 @@ class WaterApplicationController extends Controller
         }
 
         if ($hasRecreation) {
-            $recreationDetails = $draftData['recreation_details'] ?? [];
+            $recreationDetails = $draftData['recreation_details']
+                ?? ($draftData['borang_c']['recreation_details'] ?? []);
 
             if (is_array($recreationDetails)) {
                 foreach ($recreationDetails as $item) {
@@ -2350,7 +2650,8 @@ class WaterApplicationController extends Controller
         }
 
         if ($hasVessel) {
-            $vesselDetails = $draftData['vessel_details'] ?? [];
+            $vesselDetails = $draftData['vessel_details']
+                ?? ($draftData['borang_d']['vessel_details'] ?? []);
 
             if (is_array($vesselDetails)) {
                 foreach ($vesselDetails as $item) {
@@ -2401,7 +2702,8 @@ class WaterApplicationController extends Controller
         }
 
         if ($hasCage) {
-            $cageDetails = $draftData['cage_details'] ?? [];
+            $cageDetails = $draftData['cage_details']
+                ?? ($draftData['borang_f'] ?? []);
             $area = 0;
 
             if (is_array($cageDetails)) {
@@ -2431,7 +2733,8 @@ class WaterApplicationController extends Controller
         }
 
         if ($hasConstruction) {
-            $constructionDetails = $draftData['construction_details'] ?? [];
+            $constructionDetails = $draftData['construction_details']
+                ?? ($draftData['borang_g'] ?? []);
             $area = 0;
 
             if (is_array($constructionDetails)) {

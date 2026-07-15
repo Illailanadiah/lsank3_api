@@ -234,7 +234,7 @@ class WaterApplicationController extends Controller
             'applicant_type' => ['nullable', 'string', 'max:100'],
             'applicant_name' => ['nullable', 'string', 'max:255'],
             'identity_no' => ['nullable', 'string', 'max:50'],
-            'email' => ['nullable', 'email', 'max:255'],
+            'email' => ['nullable', 'string', 'max:255'],
             'phone_no' => ['nullable', 'string', 'max:30'],
             'phone' => ['nullable', 'string', 'max:30'],
             'address' => ['nullable', 'string'],
@@ -243,7 +243,7 @@ class WaterApplicationController extends Controller
             'registration_no' => ['nullable', 'string', 'max:100'],
             'business_address' => ['nullable', 'string'],
             'business_phone' => ['nullable', 'string', 'max:30'],
-            'business_email' => ['nullable', 'email', 'max:255'],
+            'business_email' => ['nullable', 'string', 'max:255'],
             'responsible_officer_name' => ['nullable', 'string', 'max:255'],
             'responsible_officer_phone' => ['nullable', 'string', 'max:30'],
             'responsible_officer_position' => ['nullable', 'string', 'max:255'],
@@ -446,45 +446,89 @@ class WaterApplicationController extends Controller
         });
     }
 
-    public function generateInvoice(Request $request, LsankApplication $application)
-    {
-        if ((int) $application->user_id !== (int) $request->user()->user_id) {
+    public function generateInvoice(
+        Request $request,
+        LsankApplication $application
+    ) {
+        if (
+            (int) $application->user_id !==
+            (int) $request->user()->user_id
+        ) {
             return response()->json([
                 'success' => false,
                 'message' => 'Permohonan tidak dijumpai.',
             ], 404);
         }
 
-        $typeId = $this->applicationTypeId(self::TYPE_CODE, self::TYPE_NAME);
+        $typeId = $this->applicationTypeId(
+            self::TYPE_CODE,
+            self::TYPE_NAME
+        );
 
-        if ((int) $application->application_type_id !== (int) $typeId) {
+        if (
+            (int) $application->application_type_id !==
+            (int) $typeId
+        ) {
             return response()->json([
                 'success' => false,
-                'message' => 'Permohonan badan perairan tidak dijumpai.',
+                'message' =>
+                    'Permohonan badan perairan tidak dijumpai.',
             ], 404);
         }
 
-        if (in_array($application->application_status, [
-            LsankApplication::STATUS_DALAM_PROSES,
-            LsankApplication::STATUS_LULUS,
-            LsankApplication::STATUS_GAGAL,
-        ], true)) {
+        if (
+            in_array(
+                $application->application_status,
+                [
+                    LsankApplication::STATUS_DALAM_PROSES,
+                    LsankApplication::STATUS_LULUS,
+                    LsankApplication::STATUS_GAGAL,
+                ],
+                true
+            )
+        ) {
             return response()->json([
                 'success' => false,
-                'message' => 'Permohonan ini telah dihantar atau telah selesai diproses.',
+                'message' =>
+                    'Permohonan ini telah dihantar atau telah selesai diproses.',
             ], 422);
         }
 
-        return DB::transaction(function () use ($application) {
-            $paymentStatusId = $this->applicationStatusId('payment', 'Fi Pemprosesan', 2);
+        return DB::transaction(function () use (
+            $application
+        ) {
+            /*
+            * Ambil semula rekod dan lock supaya dua request
+            * tidak menjana invois serentak.
+            */
+            $application = LsankApplication::query()
+                ->where(
+                    'application_id',
+                    $application->application_id
+                )
+                ->lockForUpdate()
+                ->firstOrFail();
 
-            $draftData = is_array($application->draft_data)
+            $paymentStatusId =
+                $this->applicationStatusId(
+                    'payment',
+                    'Fi Pemprosesan',
+                    2
+                );
+
+            $draftData = is_array(
+                $application->draft_data
+            )
                 ? $application->draft_data
                 : [];
 
-            $selectedActivities = $draftData['selected_activities'] ?? [];
+            $selectedActivities =
+                $draftData['selected_activities'] ?? [];
 
-            if (!is_array($selectedActivities) || empty($selectedActivities)) {
+            if (
+                !is_array($selectedActivities) ||
+                empty($selectedActivities)
+            ) {
                 $selectedActivities = [
                     $application->activity_name
                         ?? $application->activity_details
@@ -492,101 +536,226 @@ class WaterApplicationController extends Controller
                 ];
             }
 
-            $selectedActivities = collect($selectedActivities)
-                ->map(fn ($item) => trim((string) $item))
-                ->filter()
-                ->unique()
-                ->values()
-                ->all();
+            $selectedActivities =
+                collect($selectedActivities)
+                    ->map(
+                        fn ($item) =>
+                            trim((string) $item)
+                    )
+                    ->filter()
+                    ->unique()
+                    ->values()
+                    ->all();
 
             if (empty($selectedActivities)) {
-                $selectedActivities = ['Aktiviti Rekreasi Sukan Air'];
+                $selectedActivities = [
+                    'Aktiviti Rekreasi Sukan Air',
+                ];
             }
 
-            $splitBatchId = $draftData['split_batch_id']
-                ?? 'WATER-BATCH-' . $application->application_id . '-' . now()->format('YmdHis');
+            $splitBatchId =
+                $draftData['split_batch_id']
+                ?? (
+                    'WATER-BATCH-' .
+                    $application->application_id .
+                    '-' .
+                    now()->format('YmdHis')
+                );
 
-            $draftData['selected_activities'] = $selectedActivities;
-            $draftData['processing_invoice_activities'] = $selectedActivities;
-            $draftData['original_selected_activities'] = $selectedActivities;
-            $draftData['split_batch_id'] = $splitBatchId;
-            $draftData['is_split_parent'] = true;
-            $draftData['is_split_child'] = false;
+            $draftData['selected_activities'] =
+                $selectedActivities;
 
-            $application->draft_data = $draftData;
-            $application->application_status_id = $paymentStatusId;
-            $application->application_status = LsankApplication::STATUS_FI_PEMPROSESAN;
-            $application->payment_status = LsankApplication::PAYMENT_MENUNGGU_BAYARAN;
-            $application->submitted_at = null;
+            $draftData['processing_invoice_activities'] =
+                $selectedActivities;
+
+            $draftData['original_selected_activities'] =
+                $selectedActivities;
+
+            $draftData['split_batch_id'] =
+                $splitBatchId;
+
+            $draftData['is_split_parent'] =
+                true;
+
+            $draftData['is_split_child'] =
+                false;
+
+            $application->draft_data =
+                $draftData;
+
+            $application->application_status_id =
+                $paymentStatusId;
+
+            $application->application_status =
+                LsankApplication::STATUS_FI_PEMPROSESAN;
+
+            $application->payment_status =
+                LsankApplication::PAYMENT_MENUNGGU_BAYARAN;
+
+            $application->submitted_at =
+                null;
+
             $application->save();
 
-            LsankInvoice::where('application_id', $application->application_id)
-                ->where('status', 'unpaid')
-                ->delete();
+            $requiredInvoiceCount =
+                count($selectedActivities);
 
-            $createdInvoices = [];
-            $startInvoiceRunningNumber = $this->nextInvoiceRunningNumber();
+            $existingInvoices =
+                LsankInvoice::query()
+                    ->where(
+                        'application_id',
+                        $application->application_id
+                    )
+                    ->where('status', 'unpaid')
+                    ->orderBy('invoice_id')
+                    ->lockForUpdate()
+                    ->get();
 
-            foreach ($selectedActivities as $index => $activity) {
-                $invoice = LsankInvoice::create([
-                    'application_id' => $application->application_id,
-                    'user_id' => $application->user_id,
-                    'invoice_no' => $this->generateInvoiceNoByRunningNumber(
-                        $startInvoiceRunningNumber + $index,
-                        '01'
-                    ),
-                    'invoice_date' => now()->toDateString(),
-                    'due_date' => now()->addDays(14)->toDateString(),
-                    'total_amount' => 150,
-                    'status' => 'unpaid',
-                ]);
+            if (
+                $existingInvoices->count() ===
+                $requiredInvoiceCount
+            ) {
+                $createdInvoices =
+                    $existingInvoices
+                        ->values()
+                        ->all();
+            } else {
+                LsankInvoice::query()
+                    ->where(
+                        'application_id',
+                        $application->application_id
+                    )
+                    ->where('status', 'unpaid')
+                    ->delete();
 
-                $createdInvoices[] = $invoice;
+                $createdInvoices = [];
+
+                $startInvoiceRunningNumber =
+                    $this->nextInvoiceRunningNumber();
+
+                foreach (
+                    $selectedActivities as $index => $activity
+                ) {
+                    $invoiceNo =
+                        $this
+                            ->generateInvoiceNoByRunningNumber(
+                                $startInvoiceRunningNumber +
+                                    $index,
+                                '01'
+                            );
+
+                    $invoice =
+                        LsankInvoice::create([
+                            'application_id' =>
+                                $application->application_id,
+
+                            'user_id' =>
+                                $application->user_id,
+
+                            'invoice_no' =>
+                                $invoiceNo,
+
+                            'invoice_date' =>
+                                now()->toDateString(),
+
+                            'due_date' =>
+                                now()
+                                    ->addDays(14)
+                                    ->toDateString(),
+
+                            'total_amount' =>
+                                150,
+
+                            'status' =>
+                                'unpaid',
+                        ]);
+
+                    $createdInvoices[] =
+                        $invoice;
+                }
             }
+
+            $firstInvoice =
+                $createdInvoices[0];
+
+            $totalProcessingFee =
+                count($createdInvoices) * 150;
 
             return response()->json([
                 'success' => true,
-                'message' => count($createdInvoices) > 1
-                    ? 'Invois fi pemprosesan berjaya dijana mengikut jenis aktiviti.'
-                    : 'Invois fi pemprosesan berjaya dijana.',
+
+                'message' =>
+                    count($createdInvoices) > 1
+                        ? 'Invois fi pemprosesan berjaya dijana mengikut jenis aktiviti.'
+                        : 'Invois fi pemprosesan berjaya dijana.',
+
                 'data' => [
-                    'id' => $application->application_id,
-                    'application_id' => $application->application_id,
+                    'id' =>
+                        $application->application_id,
 
-                    'application_ids' => [$application->application_id],
+                    'application_id' =>
+                        $application->application_id,
 
-                    'application_no' => $application->application_ref_no,
-                    'application_ref_no' => $application->application_ref_no,
+                    'application_ids' => [
+                        $application->application_id,
+                    ],
 
-                    'application_nos' => [$application->application_ref_no],
-                    'application_ref_nos' => [$application->application_ref_no],
+                    'application_no' =>
+                        $application->application_ref_no,
 
-                    'activity_names' => $selectedActivities,
+                    'application_ref_no' =>
+                        $application->application_ref_no,
 
-                    'invoice_id' => $createdInvoices[0]->invoice_id,
+                    'application_nos' => [
+                        $application->application_ref_no,
+                    ],
 
-                    'invoice_ids' => collect($createdInvoices)
-                        ->pluck('invoice_id')
-                        ->values()
-                        ->all(),
+                    'application_ref_nos' => [
+                        $application->application_ref_no,
+                    ],
 
-                    'invoice_no' => $createdInvoices[0]->invoice_no,
+                    'activity_names' =>
+                        $selectedActivities,
 
-                    'invoice_nos' => collect($createdInvoices)
-                        ->pluck('invoice_no')
-                        ->values()
-                        ->all(),
+                    'invoice_id' =>
+                        $firstInvoice->invoice_id,
 
-                    'processing_fee' => count($createdInvoices) * 150,
-                    'processing_fee_display' => 'RM ' . number_format(count($createdInvoices) * 150, 2),
+                    'invoice_ids' =>
+                        collect($createdInvoices)
+                            ->pluck('invoice_id')
+                            ->values()
+                            ->all(),
 
-                    'split_batch_id' => $splitBatchId,
+                    'invoice_no' =>
+                        $firstInvoice->invoice_no,
 
-                    'status' => LsankApplication::STATUS_FI_PEMPROSESAN,
-                    'payment_status' => LsankApplication::PAYMENT_MENUNGGU_BAYARAN,
+                    'invoice_nos' =>
+                        collect($createdInvoices)
+                            ->pluck('invoice_no')
+                            ->values()
+                            ->all(),
+
+                    'processing_fee' =>
+                        $totalProcessingFee,
+
+                    'processing_fee_display' =>
+                        'RM ' .
+                        number_format(
+                            $totalProcessingFee,
+                            2
+                        ),
+
+                    'split_batch_id' =>
+                        $splitBatchId,
+
+                    'status' =>
+                        LsankApplication::STATUS_FI_PEMPROSESAN,
+
+                    'payment_status' =>
+                        LsankApplication::PAYMENT_MENUNGGU_BAYARAN,
                 ],
             ]);
-        });
+        }, 3);
     }
 
     public function pay(Request $request, LsankApplication $application)
@@ -1531,74 +1700,134 @@ class WaterApplicationController extends Controller
         };
     }
 
-    private function generateProcessingInvoiceNo(LsankApplication $application): string
-    {
-        return $this->generateInvoiceNoByRunningNumber(
-            $this->nextInvoiceRunningNumber(),
-            '01'
-        );
-    }
-
-    private function generateProcessingInvoiceNoByIndex(LsankApplication $application, int $index): string
-    {
-        return $this->generateInvoiceNoByRunningNumber(
-            $this->nextInvoiceRunningNumber() + $index,
-            '01'
-        );
-    }
-
-    private function generateInvoiceNoByRunningNumber(int $runningNumber, string $feeTypeCode): string
-    {
+    private function generateInvoiceNoByRunningNumber(
+        int $runningNumber,
+        string $feeTypeCode
+    ): string {
         $year = now()->format('Y');
-        $runningNo = str_pad($runningNumber, 4, '0', STR_PAD_LEFT);
 
-        return 'INVOIS-' . $year . '-' . $runningNo . '-' . $feeTypeCode;
+        do {
+            $runningNo = str_pad(
+                $runningNumber,
+                4,
+                '0',
+                STR_PAD_LEFT
+            );
+
+            $invoiceNo =
+                'INVOIS-' .
+                $year .
+                '-' .
+                $runningNo .
+                '-' .
+                $feeTypeCode;
+
+            if (
+                !LsankInvoice::where(
+                    'invoice_no',
+                    $invoiceNo
+                )->exists()
+            ) {
+                return $invoiceNo;
+            }
+
+            $runningNumber++;
+        } while (true);
     }
 
     private function nextInvoiceRunningNumber(): int
     {
         $year = now()->format('Y');
+        $prefix = 'INVOIS-' . $year . '-';
 
-        $latestInvoice = LsankInvoice::where('invoice_no', 'like', 'INVOIS-' . $year . '-%')
-            ->orderByDesc('invoice_id')
-            ->first();
+        $latestInvoiceNo = LsankInvoice::query()
+            ->where('invoice_no', 'like', $prefix . '%')
+            ->lockForUpdate()
+            ->orderByRaw(
+                "CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(invoice_no, '-', 3), '-', -1) AS UNSIGNED) DESC"
+            )
+            ->value('invoice_no');
 
-        if (!$latestInvoice || empty($latestInvoice->invoice_no)) {
+        if (empty($latestInvoiceNo)) {
             return 101;
         }
 
-        $parts = explode('-', $latestInvoice->invoice_no);
+        $parts = explode('-', $latestInvoiceNo);
 
-        if (count($parts) < 3) {
+        if (
+            count($parts) < 4 ||
+            !isset($parts[2]) ||
+            !is_numeric($parts[2])
+        ) {
             return 101;
         }
 
-        $latestRunningNo = (int) $parts[2];
+        $latestRunningNumber = (int) $parts[2];
 
-        if ($latestRunningNo < 101) {
-            return 101;
-        }
-
-        return $latestRunningNo + 1;
+        return max(101, $latestRunningNumber + 1);
     }
 
     private function createOrUpdateProcessingInvoice(
         LsankApplication $application,
         array $fees = []
     ): LsankInvoice {
-        return LsankInvoice::updateOrCreate(
-            [
-                'application_id' => $application->application_id,
-                'invoice_no' => $this->generateProcessingInvoiceNo($application),
-            ],
-            [
-                'user_id' => $application->user_id,
-                'invoice_date' => now()->toDateString(),
-                'due_date' => now()->addDays(14)->toDateString(),
-                'total_amount' => 150,
-                'status' => 'unpaid',
-            ]
-        );
+        $existingInvoice =
+            LsankInvoice::query()
+                ->where(
+                    'application_id',
+                    $application->application_id
+                )
+                ->where('status', 'unpaid')
+                ->orderBy('invoice_id')
+                ->first();
+
+        if ($existingInvoice) {
+            $existingInvoice->update([
+                'user_id' =>
+                    $application->user_id,
+
+                'invoice_date' =>
+                    now()->toDateString(),
+
+                'due_date' =>
+                    now()
+                        ->addDays(14)
+                        ->toDateString(),
+
+                'total_amount' =>
+                    $fees['processing_fee'] ?? 150,
+            ]);
+
+            return $existingInvoice->fresh();
+        }
+
+        return LsankInvoice::create([
+            'application_id' =>
+                $application->application_id,
+
+            'user_id' =>
+                $application->user_id,
+
+            'invoice_no' =>
+                $this->generateInvoiceNoByRunningNumber(
+                    $this->nextInvoiceRunningNumber(),
+                    '01'
+                ),
+
+            'invoice_date' =>
+                now()->toDateString(),
+
+            'due_date' =>
+                now()
+                    ->addDays(14)
+                    ->toDateString(),
+
+            'total_amount' =>
+                $fees['processing_fee'] ?? 150,
+
+            'status' =>
+                'unpaid',
+        ]);
     }
 
     private function generateApplicationFileNo(string $sectionCode, string $districtCode): string

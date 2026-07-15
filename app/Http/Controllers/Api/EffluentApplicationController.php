@@ -848,11 +848,8 @@ class EffluentApplicationController extends Controller
             LsankApplication::PAYMENT_SUDAH_BAYAR;
 
         $application->submitted_at = now();
-<<<<<<<<< Temporary merge branch 1
         $application->save();
-=========
         $application->submitted_data = $application->draft_data;
->>>>>>>>> Temporary merge branch 2
 
         $application->remarks = trim(
             (($application->remarks ?? '') . "\nBayaran simulasi berjaya pada " . now()->format('d/m/Y H:i'))

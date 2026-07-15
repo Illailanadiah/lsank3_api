@@ -310,44 +310,45 @@ class LicenseController extends Controller
     /**
      * Download QR PNG once.
      */
-    public function downloadQr(
-        Request $request,
-        LsankLicense $license
-    ) {
-        if ($license->qr_downloaded_at !== null) {
-            return response()->json([
-                'success' => false,
-                'message' =>
-                    'Kod QR hanya boleh dimuat turun sekali.',
-            ], 409);
-        }
-
-        $this->ensureArtifacts($license);
-
-        if (
-            empty($license->qr_code_path) ||
-            !Storage::disk('local')->exists(
-                $license->qr_code_path
-            )
-        ) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Fail PNG kod QR tidak dijumpai.',
-            ], 404);
-        }
-
-        $license->forceFill([
-            'qr_downloaded_at' => now(),
-        ])->save();
-
-        return Storage::disk('local')->download(
-            $license->qr_code_path,
-            "{$license->license_no}-QR.png",
-            [
-                'Content-Type' => 'image/png',
-            ]
-        );
+  public function downloadQr(
+    Request $request,
+    LsankLicense $license
+) {
+    if ($license->qr_downloaded_at !== null) {
+        return response()->json([
+            'success' => false,
+            'message' =>
+                'Kod QR hanya boleh dimuat turun sekali.',
+        ], 409);
     }
+
+    $this->ensureArtifacts($license);
+
+    if (
+        empty($license->qr_code_path) ||
+        !Storage::disk('local')->exists(
+            $license->qr_code_path
+        )
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' =>
+                'Fail SVG kod QR tidak dijumpai.',
+        ], 404);
+    }
+
+    $license->forceFill([
+        'qr_downloaded_at' => now(),
+    ])->save();
+
+    return Storage::disk('local')->download(
+        $license->qr_code_path,
+        "{$license->license_no}-QR.svg",
+        [
+            'Content-Type' => 'image/svg+xml',
+        ]
+    );
+}
 
     /**
      * Public QR verification endpoint.
@@ -433,84 +434,85 @@ class LicenseController extends Controller
     }
 
     private function buildArtifacts(
-        LsankLicense $license
-    ): void {
-        $license->loadMissing([
-            'application',
-            'status',
-        ]);
+    LsankLicense $license
+): void {
+    $license->loadMissing([
+        'application',
+        'status',
+    ]);
 
-        $verificationUrl = url(
-            "/api/licenses/verify/{$license->qr_token}"
-        );
+    $verificationUrl = url(
+        "/api/licenses/verify/{$license->qr_token}"
+    );
 
-        $safeLicenseNo = str_replace(
-            ['/', '\\', ' '],
-            '-',
-            $license->license_no
-        );
+    $safeLicenseNo = str_replace(
+        ['/', '\\', ' '],
+        '-',
+        $license->license_no
+    );
 
-        $qrRelativePath =
-            "licenses/qr/{$safeLicenseNo}.png";
+    $qrRelativePath =
+        "licenses/qr/{$safeLicenseNo}.svg";
 
-        $pdfRelativePath =
-            "licenses/pdf/{$safeLicenseNo}.pdf";
+    $pdfRelativePath =
+        "licenses/pdf/{$safeLicenseNo}.pdf";
 
-        Storage::disk('local')->makeDirectory(
-            'licenses/qr'
-        );
+    Storage::disk('local')->makeDirectory(
+        'licenses/qr'
+    );
 
-        Storage::disk('local')->makeDirectory(
-            'licenses/pdf'
-        );
+    Storage::disk('local')->makeDirectory(
+        'licenses/pdf'
+    );
 
-        $qrPng = QrCode::format('png')
-            ->size(420)
-            ->margin(1)
-            ->errorCorrection('H')
-            ->generate($verificationUrl);
+    $qrSvg = QrCode::format('svg')
+        ->size(420)
+        ->margin(1)
+        ->errorCorrection('H')
+        ->generate($verificationUrl);
 
-        Storage::disk('local')->put(
-            $qrRelativePath,
-            $qrPng
-        );
+    Storage::disk('local')->put(
+        $qrRelativePath,
+        $qrSvg
+    );
 
-        $pdf = Pdf::loadView(
-            'licenses.certificate',
-            [
-                'license' => $license,
-                'application' => $license->application,
-                'qrDataUri' =>
-                    'data:image/png;base64,'
-                    . base64_encode($qrPng),
-                'verificationUrl' => $verificationUrl,
-            ]
-        )->setPaper('a4', 'portrait');
+    $qrDataUri =
+        'data:image/svg+xml;base64,'
+        . base64_encode($qrSvg);
 
-        Storage::disk('local')->put(
-            $pdfRelativePath,
-            $pdf->output()
-        );
+    $pdf = Pdf::loadView(
+        'licenses.certificate',
+        [
+            'license' => $license,
+            'application' => $license->application,
+            'qrDataUri' => $qrDataUri,
+            'verificationUrl' => $verificationUrl,
+        ]
+    )->setPaper('a4', 'portrait');
 
-        $license->forceFill([
-            'qr_code_path' => $qrRelativePath,
-            'license_pdf_path' => $pdfRelativePath,
-        ])->save();
-    }
+    Storage::disk('local')->put(
+        $pdfRelativePath,
+        $pdf->output()
+    );
 
+    $license->forceFill([
+        'qr_code_path' => $qrRelativePath,
+        'license_pdf_path' => $pdfRelativePath,
+    ])->save();
+}
     private function nextLicenseNumber(
         LsankApplication $application
     ): string {
         $year = now()->format('Y');
 
         $typeName = strtolower(
-            trim((string) (
-                $application->application_type?->type_name
-                ?? $application->license_type
-                ?? ''
-            ))
-        );
-
+    trim((string) (
+        $application->license_type
+        ?? $application->activity_type
+        ?? $application->application_type
+        ?? ''
+    ))
+);
         $prefix = str_contains($typeName, 'efluen')
             ? 'EF'
             : 'WB';
@@ -575,15 +577,18 @@ class LicenseController extends Controller
         ));
     }
 
-    private function resolveLicenseType(
-        LsankApplication $application
-    ): string {
-        return trim((string) (
-            $application->license_type
-            ?? $application->application_type?->type_name
-            ?? 'Aktiviti Badan Perairan'
-        ));
-    }
+   private function resolveLicenseType(
+    LsankApplication $application
+): string {
+    return trim((string) (
+        $application->license_type
+        ?? (
+            $application->application_type === 'effluent'
+                ? 'Aktiviti Pelepasan Efluen'
+                : 'Aktiviti Badan Perairan'
+        )
+    ));
+}
 
     private function resolveActivityName(
         LsankApplication $application

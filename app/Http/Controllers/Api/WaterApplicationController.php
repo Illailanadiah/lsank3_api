@@ -11,6 +11,7 @@ use App\Models\LsankWaterBodyApplication;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Models\LsankInvoice;
+use App\Models\LsankReceipt;
 
 class WaterApplicationController extends Controller
 {
@@ -34,9 +35,6 @@ class WaterApplicationController extends Controller
             ->latest('application_id')
             ->get()
             ->map(function ($application) {
-                $year = optional($application->created_at)->format('Y') ?? now()->format('Y');
-                $runningNo = str_pad($application->application_id, 4, '0', STR_PAD_LEFT);
-
                 $fees = $this->calculateWaterFees($application);
 
                 $draftData = is_array($application->draft_data)
@@ -125,25 +123,101 @@ class WaterApplicationController extends Controller
                     ->values()
                     ->all();
 
-                $receiptItems = [];
+                $receiptItems = LsankReceipt::query()
+                    ->with('invoice')
+                    ->whereHas(
+                        'invoice',
+                        function ($query) use ($application) {
+                            $query->where(
+                                'application_id',
+                                $application->application_id
+                            );
+                        }
+                    )
+                    ->orderBy('receipt_id')
+                    ->get()
+                    ->map(function ($receipt) use ($application) {
+                        $invoice = $receipt->invoice;
 
-                if (
-                    in_array($application->application_status, [
-                        LsankApplication::STATUS_DALAM_PROSES,
-                        LsankApplication::STATUS_LULUS,
-                        LsankApplication::STATUS_GAGAL,
-                    ], true) ||
-                    $application->payment_status === LsankApplication::PAYMENT_SUDAH_BAYAR
-                ) {
-                    $receiptItems[] = [
-                        'receipt_id' => $application->application_id,
-                        'receipt_no' => 'RESIT-' . $year . '-' . $runningNo . '-01',
-                        'payment_type' => 'Fi Pemprosesan',
-                        'amount' => 150,
-                        'amount_display' => 'RM 150.00',
-                        'paid_date' => optional($application->updated_at)->format('d/m/Y') ?? '-',
-                    ];
-                }
+                        $paymentType =
+                            $invoice?->payment_type
+                            ?? 'Fi Pemprosesan';
+
+                        return [
+                            'receipt_id' =>
+                                $receipt->receipt_id,
+
+                            'receipt_no' =>
+                                $receipt->receipt_no,
+
+                            'invoice_id' =>
+                                $receipt->invoice_id,
+
+                            'invoice_no' =>
+                                $invoice?->invoice_no,
+
+                            'payment_id' =>
+                                $receipt->payment_id,
+
+                            'payment_type' =>
+                                $paymentType,
+
+                            'amount' =>
+                                (float) $receipt->amount,
+
+                            'amount_display' =>
+                                'RM ' .
+                                number_format(
+                                    (float) $receipt->amount,
+                                    2
+                                ),
+
+                            'receipt_date' =>
+                                optional($receipt->receipt_date)
+                                    ->format('d/m/Y')
+                                ?? '-',
+
+                            'paid_date' =>
+                                optional($receipt->receipt_date)
+                                    ->format('d/m/Y')
+                                ?? '-',
+
+                            'paid_at' =>
+                                optional($receipt->receipt_date)
+                                    ->toDateTimeString(),
+
+                            'receipt_pdf_path' =>
+                                $receipt->receipt_pdf_path,
+
+                            'status' =>
+                                $receipt->status,
+
+                            'application_id' =>
+                                $application->application_id,
+
+                            'application_ref_no' =>
+                                $application->application_ref_no,
+
+                            'application_no' =>
+                                $application->application_ref_no,
+
+                            'application_ref_nos' => [
+                                $application->application_ref_no,
+                            ],
+
+                            'application_nos' => [
+                                $application->application_ref_no,
+                            ],
+
+                            'activity_name' =>
+                                $application->activity_name,
+
+                            'activity_details' =>
+                                $application->activity_details,
+                        ];
+                    })
+                    ->values()
+                    ->all();
 
                 return [
                     'id' => $application->application_id,
@@ -615,6 +689,15 @@ class WaterApplicationController extends Controller
                 $existingInvoices->count() ===
                 $requiredInvoiceCount
             ) {
+                foreach ($existingInvoices as $existingInvoice) {
+                    if (empty($existingInvoice->payment_type)) {
+                        $existingInvoice->payment_type =
+                            'Fi Pemprosesan';
+
+                        $existingInvoice->save();
+                    }
+                }
+
                 $createdInvoices =
                     $existingInvoices
                         ->values()
@@ -644,31 +727,33 @@ class WaterApplicationController extends Controller
                                 '01'
                             );
 
-                    $invoice =
-                        LsankInvoice::create([
-                            'application_id' =>
-                                $application->application_id,
+                    $invoice = LsankInvoice::create([
+                        'application_id' =>
+                            $application->application_id,
 
-                            'user_id' =>
-                                $application->user_id,
+                        'user_id' =>
+                            $application->user_id,
 
-                            'invoice_no' =>
-                                $invoiceNo,
+                        'invoice_no' =>
+                            $invoiceNo,
 
-                            'invoice_date' =>
-                                now()->toDateString(),
+                        'payment_type' =>
+                            'Fi Pemprosesan',
 
-                            'due_date' =>
-                                now()
-                                    ->addDays(14)
-                                    ->toDateString(),
+                        'invoice_date' =>
+                            now()->toDateString(),
 
-                            'total_amount' =>
-                                150,
+                        'due_date' =>
+                            now()
+                                ->addDays(14)
+                                ->toDateString(),
 
-                            'status' =>
-                                'unpaid',
-                        ]);
+                        'total_amount' =>
+                            150,
+
+                        'status' =>
+                            'unpaid',
+                    ]);
 
                     $createdInvoices[] =
                         $invoice;
@@ -758,33 +843,80 @@ class WaterApplicationController extends Controller
         }, 3);
     }
 
-    public function pay(Request $request, LsankApplication $application)
-    {
-        if ((int) $application->user_id !== (int) $request->user()->user_id) {
+    public function pay(
+        Request $request,
+        LsankApplication $application
+    ) {
+        if (
+            (int) $application->user_id !==
+            (int) $request->user()->user_id
+        ) {
             return response()->json([
                 'success' => false,
                 'message' => 'Permohonan tidak dijumpai.',
             ], 404);
         }
 
-        $typeId = $this->applicationTypeId(self::TYPE_CODE, self::TYPE_NAME);
+        $typeId = $this->applicationTypeId(
+            self::TYPE_CODE,
+            self::TYPE_NAME
+        );
 
-        if ((int) $application->application_type_id !== (int) $typeId) {
+        if (
+            (int) $application->application_type_id !==
+            (int) $typeId
+        ) {
             return response()->json([
                 'success' => false,
-                'message' => 'Permohonan badan perairan tidak dijumpai.',
+                'message' =>
+                    'Permohonan badan perairan tidak dijumpai.',
             ], 404);
         }
 
-        if ($application->application_status !== LsankApplication::STATUS_FI_PEMPROSESAN) {
+        if (
+            $application->application_status !==
+            LsankApplication::STATUS_FI_PEMPROSESAN
+        ) {
             return response()->json([
                 'success' => false,
-                'message' => 'Permohonan ini belum berada di peringkat fi pemprosesan.',
+                'message' =>
+                    'Permohonan ini belum berada di peringkat fi pemprosesan.',
             ], 422);
         }
 
         return DB::transaction(function () use ($application) {
-            $statusId = $this->applicationStatusId('in_process', 'Dalam Proses', 3);
+            /*
+            * Lock permohonan supaya request bayaran berganda
+            * tidak menghasilkan resit dan permohonan pendua.
+            */
+            $application = LsankApplication::query()
+                ->where(
+                    'application_id',
+                    $application->application_id
+                )
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            /*
+            * Sekiranya bayaran telah diproses oleh request lain,
+            * hentikan proses berulang.
+            */
+            if (
+                $application->payment_status ===
+                LsankApplication::PAYMENT_SUDAH_BAYAR
+            ) {
+                return response()->json([
+                    'success' => false,
+                    'message' =>
+                        'Bayaran bagi permohonan ini telah berjaya dibuat.',
+                ], 422);
+            }
+
+            $statusId = $this->applicationStatusId(
+                'in_process',
+                'Dalam Proses',
+                3
+            );
 
             $draftData = is_array($application->draft_data)
                 ? $application->draft_data
@@ -796,7 +928,10 @@ class WaterApplicationController extends Controller
                 ?? $draftData['selected_activities']
                 ?? [];
 
-            if (!is_array($selectedActivities) || empty($selectedActivities)) {
+            if (
+                !is_array($selectedActivities) ||
+                empty($selectedActivities)
+            ) {
                 $selectedActivities = [
                     $application->activity_name
                         ?? $application->activity_details
@@ -805,202 +940,462 @@ class WaterApplicationController extends Controller
             }
 
             $selectedActivities = collect($selectedActivities)
-                ->map(fn ($item) => trim((string) $item))
+                ->map(function ($item) {
+                    return trim((string) $item);
+                })
                 ->filter()
                 ->unique()
                 ->values()
                 ->all();
 
             if (empty($selectedActivities)) {
-                $selectedActivities = ['Aktiviti Rekreasi Sukan Air'];
+                $selectedActivities = [
+                    'Aktiviti Rekreasi Sukan Air',
+                ];
             }
 
-            $splitBatchId = $draftData['split_batch_id']
-                ?? 'WATER-BATCH-' . $application->application_id . '-' . now()->format('YmdHis');
+            $splitBatchId =
+                $draftData['split_batch_id']
+                ?? (
+                    'WATER-BATCH-' .
+                    $application->application_id .
+                    '-' .
+                    now()->format('YmdHis')
+                );
 
-            $invoices = LsankInvoice::where('application_id', $application->application_id)
+            /*
+            * Ambil semua invois fi pemprosesan yang belum dibayar.
+            */
+            $invoices = LsankInvoice::query()
+                ->where(
+                    'application_id',
+                    $application->application_id
+                )
                 ->where('status', 'unpaid')
                 ->orderBy('invoice_id')
+                ->lockForUpdate()
                 ->get();
 
-            if ($invoices->count() < count($selectedActivities)) {
-                LsankInvoice::where('application_id', $application->application_id)
+            /*
+            * Jika bilangan invois tidak sama dengan bilangan aktiviti,
+            * bina semula invois fi pemprosesan.
+            */
+            if (
+                $invoices->count() <
+                count($selectedActivities)
+            ) {
+                LsankInvoice::query()
+                    ->where(
+                        'application_id',
+                        $application->application_id
+                    )
                     ->where('status', 'unpaid')
                     ->delete();
 
                 $invoices = collect();
-                $startInvoiceRunningNumber = $this->nextInvoiceRunningNumber();
 
-                foreach ($selectedActivities as $index => $activity) {
-                    $invoices->push(
-                        LsankInvoice::create([
-                            'application_id' => $application->application_id,
-                            'user_id' => $application->user_id,
-                            'invoice_no' => $this->generateInvoiceNoByRunningNumber(
-                                $startInvoiceRunningNumber + $index,
-                                '01'
-                            ),
-                            'invoice_date' => now()->toDateString(),
-                            'due_date' => now()->addDays(14)->toDateString(),
-                            'total_amount' => 150,
-                            'status' => 'unpaid',
-                        ])
-                    );
+                $startInvoiceRunningNumber =
+                    $this->nextInvoiceRunningNumber();
+
+                foreach (
+                    $selectedActivities as $index => $activity
+                ) {
+                    $invoiceNo =
+                        $this->generateInvoiceNoByRunningNumber(
+                            $startInvoiceRunningNumber + $index,
+                            '01'
+                        );
+
+                    $invoice = LsankInvoice::create([
+                        'application_id' =>
+                            $application->application_id,
+
+                        'user_id' =>
+                            $application->user_id,
+
+                        'invoice_no' =>
+                            $invoiceNo,
+
+                        'payment_type' =>
+                            'Fi Pemprosesan',
+
+                        'invoice_date' =>
+                            now()->toDateString(),
+
+                        'due_date' =>
+                            now()
+                                ->addDays(14)
+                                ->toDateString(),
+
+                        'total_amount' =>
+                            150,
+
+                        'status' =>
+                            'unpaid',
+                    ]);
+
+                    $invoices->push($invoice);
                 }
             }
 
             $paidApplications = [];
             $paidInvoices = [];
+            $paidReceipts = [];
 
-            foreach ($selectedActivities as $index => $activity) {
+            /*
+            * Ambil running number pertama sekali sahaja.
+            * Setiap resit dalam transaksi ini menggunakan nombor seterusnya.
+            */
+            $startReceiptRunningNumber =
+                $this->nextReceiptRunningNumber();
+
+            foreach (
+                $selectedActivities as $index => $activity
+            ) {
+                /*
+                * Aktiviti pertama menggunakan permohonan asal.
+                * Aktiviti seterusnya menghasilkan permohonan pecahan.
+                */
                 if ($index === 0) {
                     $splitApplication = $application;
                 } else {
                     $splitApplication = $application->replicate();
+
                     $splitApplication->exists = false;
                     $splitApplication->application_id = null;
                 }
 
-                $newDraftData = $this->waterDraftDataForActivity($draftData, $activity);
-                $newDraftData['selected_activities'] = [$activity];
-                $newDraftData['processing_invoice_activities'] = [$activity];
-                $newDraftData['original_selected_activities'] = $selectedActivities;
-                $newDraftData['split_batch_id'] = $splitBatchId;
-                $newDraftData['is_split_child'] = true;
-                $newDraftData['is_split_parent'] = $index === 0;
-                $newDraftData['split_from_application_id'] = $application->application_id;
+                $newDraftData =
+                    $this->waterDraftDataForActivity(
+                        $draftData,
+                        $activity
+                    );
 
-                $splitApplication->draft_data = $newDraftData;
-                $splitApplication->current_step = $application->current_step ?? 0;
+                $newDraftData['selected_activities'] = [
+                    $activity,
+                ];
 
-                $splitApplication->activity_name = $activity;
-                $splitApplication->activity_type = $activity;
-                $splitApplication->activity_details = $activity;
+                $newDraftData['processing_invoice_activities'] = [
+                    $activity,
+                ];
 
-                $splitApplication->application_ref_no = $this->generateApplicationFileNo(
-                    $this->waterSectionCode($activity),
-                    $this->districtCode($application->district ?? null)
-                );
+                $newDraftData['original_selected_activities'] =
+                    $selectedActivities;
 
-                $splitApplication->application_status_id = $statusId;
-                $splitApplication->application_status = LsankApplication::STATUS_DALAM_PROSES;
-                $splitApplication->payment_status = LsankApplication::PAYMENT_SUDAH_BAYAR;
-                $splitApplication->submitted_at = now();
+                $newDraftData['split_batch_id'] =
+                    $splitBatchId;
+
+                $newDraftData['is_split_child'] =
+                    true;
+
+                $newDraftData['is_split_parent'] =
+                    $index === 0;
+
+                $newDraftData['split_from_application_id'] =
+                    $application->application_id;
+
+                $splitApplication->draft_data =
+                    $newDraftData;
+
+                $splitApplication->current_step =
+                    $application->current_step ?? 0;
+
+                $splitApplication->activity_name =
+                    $activity;
+
+                $splitApplication->activity_type =
+                    $activity;
+
+                $splitApplication->activity_details =
+                    $activity;
+
+                $splitApplication->application_ref_no =
+                    $this->generateApplicationFileNo(
+                        $this->waterSectionCode($activity),
+                        $this->districtCode(
+                            $application->district ?? null
+                        )
+                    );
+
+                $splitApplication->application_status_id =
+                    $statusId;
+
+                $splitApplication->application_status =
+                    LsankApplication::STATUS_DALAM_PROSES;
+
+                $splitApplication->payment_status =
+                    LsankApplication::PAYMENT_SUDAH_BAYAR;
+
+                $splitApplication->submitted_at =
+                    now();
 
                 $splitApplication->remarks = trim(
-                    (($splitApplication->remarks ?? '') . "\nBayaran simulasi berjaya pada " . now()->format('d/m/Y H:i'))
+                    (
+                        ($splitApplication->remarks ?? '') .
+                        "\nBayaran berjaya pada " .
+                        now()->format('d/m/Y H:i')
+                    )
                 );
 
                 $splitApplication->save();
 
-                $this->syncWaterBodyForActivity($splitApplication, $activity);
+                $this->syncWaterBodyForActivity(
+                    $splitApplication,
+                    $activity
+                );
 
-                $invoice = $invoices->values()->get($index);
+                $invoice = $invoices
+                    ->values()
+                    ->get($index);
 
+                /*
+                * Safety fallback jika invois tiada.
+                */
                 if (!$invoice) {
                     $invoice = LsankInvoice::create([
-                        'application_id' => $splitApplication->application_id,
-                        'user_id' => $splitApplication->user_id,
-                        'invoice_no' => $this->generateInvoiceNoByRunningNumber(
-                            $this->nextInvoiceRunningNumber(),
-                            '01'
-                        ),
-                        'invoice_date' => now()->toDateString(),
-                        'due_date' => now()->addDays(14)->toDateString(),
-                        'total_amount' => 150,
-                        'status' => 'unpaid',
+                        'application_id' =>
+                            $splitApplication->application_id,
+
+                        'user_id' =>
+                            $splitApplication->user_id,
+
+                        'invoice_no' =>
+                            $this->generateInvoiceNoByRunningNumber(
+                                $this->nextInvoiceRunningNumber(),
+                                '01'
+                            ),
+
+                        'payment_type' =>
+                            'Fi Pemprosesan',
+
+                        'invoice_date' =>
+                            now()->toDateString(),
+
+                        'due_date' =>
+                            now()
+                                ->addDays(14)
+                                ->toDateString(),
+
+                        'total_amount' =>
+                            150,
+
+                        'status' =>
+                            'unpaid',
                     ]);
                 }
 
-                $invoice->application_id = $splitApplication->application_id;
-                $invoice->user_id = $splitApplication->user_id;
-                $invoice->total_amount = 150;
-                $invoice->status = 'paid';
+                /*
+                * Pindahkan invois kepada permohonan pecahan.
+                */
+                $invoice->application_id =
+                    $splitApplication->application_id;
+
+                $invoice->user_id =
+                    $splitApplication->user_id;
+
+                $invoice->payment_type =
+                    $invoice->payment_type
+                    ?? 'Fi Pemprosesan';
+
+                $invoice->total_amount =
+                    150;
+
+                $invoice->status =
+                    'paid';
+
                 $invoice->save();
 
-                $paidApplications[] = $splitApplication;
-                $paidInvoices[] = $invoice;
+                /*
+                * Cari resit sedia ada berdasarkan invois.
+                * Ini mengelakkan resit berganda.
+                */
+                $receipt = LsankReceipt::query()
+                    ->where(
+                        'invoice_id',
+                        $invoice->invoice_id
+                    )
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$receipt) {
+                    $paymentType =
+                        $invoice->payment_type
+                        ?? 'Fi Pemprosesan';
+
+                    $feeTypeCode =
+                        $this->receiptFeeTypeCode(
+                            $paymentType
+                        );
+
+                    $receiptNo =
+                        $this->generateReceiptNoByRunningNumber(
+                            $startReceiptRunningNumber + $index,
+                            $feeTypeCode
+                        );
+
+                    $receipt = LsankReceipt::create([
+                        'receipt_no' =>
+                            $receiptNo,
+
+                        'invoice_id' =>
+                            $invoice->invoice_id,
+
+                        /*
+                        * Letakkan null jika table membenarkan null.
+                        * Jika payment_id wajib, cipta rekod payment
+                        * terlebih dahulu dan masukkan payment_id sebenar.
+                        */
+                        'payment_id' =>
+                            null,
+
+                        'receipt_date' =>
+                            now(),
+
+                        'amount' =>
+                            $invoice->total_amount,
+
+                        'receipt_pdf_path' =>
+                            null,
+
+                        'status' =>
+                            'paid',
+                    ]);
+                }
+
+                $paidApplications[] =
+                    $splitApplication;
+
+                $paidInvoices[] =
+                    $invoice;
+
+                $paidReceipts[] =
+                    $receipt;
             }
 
-            $firstApplication = $paidApplications[0];
-            $firstInvoice = $paidInvoices[0];
+            $firstApplication =
+                $paidApplications[0];
 
-            $receiptNos = collect($paidApplications)
-                ->map(function ($item) {
-                    $year = now()->format('Y');
-                    $runningNo = str_pad($item->application_id, 4, '0', STR_PAD_LEFT);
+            $firstInvoice =
+                $paidInvoices[0];
 
-                    return 'RESIT-' . $year . '-' . $runningNo . '-01';
-                })
+            $firstReceipt =
+                $paidReceipts[0];
+
+            $receiptNos = collect($paidReceipts)
+                ->pluck('receipt_no')
                 ->values()
                 ->all();
 
             return response()->json([
                 'success' => true,
-                'message' => count($paidApplications) > 1
-                    ? 'Bayaran berjaya. Permohonan telah dipecahkan mengikut aktiviti dan dihantar untuk semakan.'
-                    : 'Bayaran berjaya. Permohonan telah dihantar untuk semakan.',
+
+                'message' =>
+                    count($paidApplications) > 1
+                        ? 'Bayaran berjaya. Permohonan telah dipecahkan mengikut aktiviti dan dihantar untuk semakan.'
+                        : 'Bayaran berjaya. Permohonan telah dihantar untuk semakan.',
+
                 'data' => [
-                    'id' => $firstApplication->application_id,
-                    'application_id' => $firstApplication->application_id,
+                    'id' =>
+                        $firstApplication->application_id,
 
-                    'application_ids' => collect($paidApplications)
-                        ->pluck('application_id')
-                        ->values()
-                        ->all(),
+                    'application_id' =>
+                        $firstApplication->application_id,
 
-                    'application_no' => $firstApplication->application_ref_no,
-                    'application_ref_no' => $firstApplication->application_ref_no,
+                    'application_ids' =>
+                        collect($paidApplications)
+                            ->pluck('application_id')
+                            ->values()
+                            ->all(),
 
-                    'application_nos' => collect($paidApplications)
-                        ->pluck('application_ref_no')
-                        ->values()
-                        ->all(),
+                    'application_no' =>
+                        $firstApplication->application_ref_no,
 
-                    'application_ref_nos' => collect($paidApplications)
-                        ->pluck('application_ref_no')
-                        ->values()
-                        ->all(),
+                    'application_ref_no' =>
+                        $firstApplication->application_ref_no,
 
-                    'activity_names' => collect($paidApplications)
-                        ->pluck('activity_name')
-                        ->values()
-                        ->all(),
+                    'application_nos' =>
+                        collect($paidApplications)
+                            ->pluck('application_ref_no')
+                            ->values()
+                            ->all(),
 
-                    'invoice_id' => $firstInvoice->invoice_id,
+                    'application_ref_nos' =>
+                        collect($paidApplications)
+                            ->pluck('application_ref_no')
+                            ->values()
+                            ->all(),
 
-                    'invoice_ids' => collect($paidInvoices)
-                        ->pluck('invoice_id')
-                        ->values()
-                        ->all(),
+                    'activity_names' =>
+                        collect($paidApplications)
+                            ->pluck('activity_name')
+                            ->values()
+                            ->all(),
 
-                    'invoice_no' => $firstInvoice->invoice_no,
+                    'invoice_id' =>
+                        $firstInvoice->invoice_id,
 
-                    'invoice_nos' => collect($paidInvoices)
-                        ->pluck('invoice_no')
-                        ->values()
-                        ->all(),
+                    'invoice_ids' =>
+                        collect($paidInvoices)
+                            ->pluck('invoice_id')
+                            ->values()
+                            ->all(),
 
-                    'receipt_id' => $firstApplication->application_id,
+                    'invoice_no' =>
+                        $firstInvoice->invoice_no,
 
-                    'receipt_ids' => collect($paidApplications)
-                        ->pluck('application_id')
-                        ->values()
-                        ->all(),
+                    'invoice_nos' =>
+                        collect($paidInvoices)
+                            ->pluck('invoice_no')
+                            ->values()
+                            ->all(),
 
-                    'receipt_no' => $receiptNos[0] ?? null,
-                    'receipt_nos' => $receiptNos,
+                    'receipt_id' =>
+                        $firstReceipt->receipt_id,
 
-                    'split_batch_id' => $splitBatchId,
+                    'receipt_ids' =>
+                        collect($paidReceipts)
+                            ->pluck('receipt_id')
+                            ->values()
+                            ->all(),
 
-                    'status' => LsankApplication::STATUS_DALAM_PROSES,
-                    'status_display' => 'Dalam Proses',
-                    'payment_status' => LsankApplication::PAYMENT_SUDAH_BAYAR,
-                    'payment_status_display' => 'Sudah Bayar',
-                    'paid_at' => now()->toDateTimeString(),
+                    'receipt_no' =>
+                        $firstReceipt->receipt_no,
+
+                    'receipt_nos' =>
+                        $receiptNos,
+
+                    'processing_fee' =>
+                        collect($paidInvoices)
+                            ->sum('total_amount'),
+
+                    'processing_fee_display' =>
+                        'RM ' .
+                        number_format(
+                            collect($paidInvoices)
+                                ->sum('total_amount'),
+                            2
+                        ),
+
+                    'split_batch_id' =>
+                        $splitBatchId,
+
+                    'status' =>
+                        LsankApplication::STATUS_DALAM_PROSES,
+
+                    'status_display' =>
+                        'Dalam Proses',
+
+                    'payment_status' =>
+                        LsankApplication::PAYMENT_SUDAH_BAYAR,
+
+                    'payment_status_display' =>
+                        'Sudah Bayar',
+
+                    'paid_at' =>
+                        now()->toDateTimeString(),
                 ],
             ]);
-        });
+        }, 3);
     }
 
     public function store(Request $request)
@@ -1293,19 +1688,139 @@ class WaterApplicationController extends Controller
             ->values()
             ->all();
 
+        $receiptItems = LsankReceipt::query()
+    ->with('invoice.application')
+    ->whereHas(
+        'invoice',
+        function ($query) use ($invoiceApplicationIds) {
+            $query->whereIn(
+                'application_id',
+                $invoiceApplicationIds
+            );
+        }
+    )
+    ->orderBy('receipt_id')
+    ->get()
+    ->map(function ($receipt) {
+        $invoice = $receipt->invoice;
+        $receiptApplication = $invoice?->application;
+
+        return [
+            'receipt_id' =>
+                $receipt->receipt_id,
+
+            'receipt_no' =>
+                $receipt->receipt_no,
+
+            'invoice_id' =>
+                $receipt->invoice_id,
+
+            'invoice_no' =>
+                $invoice?->invoice_no,
+
+            'payment_id' =>
+                $receipt->payment_id,
+
+            'payment_type' =>
+                $invoice?->payment_type
+                ?? 'Fi Pemprosesan',
+
+            'amount' =>
+                (float) $receipt->amount,
+
+            'amount_display' =>
+                'RM ' . number_format(
+                    (float) $receipt->amount,
+                    2
+                ),
+
+            'receipt_date' =>
+                optional($receipt->receipt_date)
+                    ->format('d/m/Y')
+                ?? '-',
+
+            'paid_date' =>
+                optional($receipt->receipt_date)
+                    ->format('d/m/Y')
+                ?? '-',
+
+            'paid_at' =>
+                optional($receipt->receipt_date)
+                    ->toDateTimeString(),
+
+            'receipt_pdf_path' =>
+                $receipt->receipt_pdf_path,
+
+            'status' =>
+                $receipt->status,
+
+            'application_id' =>
+                $invoice?->application_id,
+
+            'application_ref_no' =>
+                $receiptApplication?->application_ref_no,
+
+            'application_no' =>
+                $receiptApplication?->application_ref_no,
+
+            'application_ref_nos' =>
+                $receiptApplication?->application_ref_no
+                    ? [
+                        $receiptApplication
+                            ->application_ref_no,
+                    ]
+                    : [],
+
+            'application_nos' =>
+                $receiptApplication?->application_ref_no
+                    ? [
+                        $receiptApplication
+                            ->application_ref_no,
+                    ]
+                    : [],
+
+            'activity_name' =>
+                $receiptApplication?->activity_name,
+
+            'activity_details' =>
+                $receiptApplication?->activity_details,
+        ];
+    })
+    ->values()
+    ->all();
+
         $processingInvoiceActivities =
             $draftData['processing_invoice_activities']
             ?? $draftData['original_selected_activities']
             ?? $draftData['selected_activities']
-            ?? [$application->activity_name ?? $application->activity_details ?? '-'];
+            ?? [
+                $application->activity_name
+                ?? $application->activity_details
+                ?? '-',
+            ];
 
-        $applicationRefNos = [$application->application_ref_no];
+        $applicationRefNos = [
+            $application->application_ref_no,
+        ];
 
         if ($splitBatchId) {
-            $applicationRefNos = LsankApplication::where('user_id', $application->user_id)
-                ->where('application_type_id', $application->application_type_id)
-                ->where('application_status', LsankApplication::STATUS_DALAM_PROSES)
-                ->where('draft_data->split_batch_id', $splitBatchId)
+            $applicationRefNos = LsankApplication::query()
+                ->where(
+                    'user_id',
+                    $application->user_id
+                )
+                ->where(
+                    'application_type_id',
+                    $application->application_type_id
+                )
+                ->where(
+                    'application_status',
+                    LsankApplication::STATUS_DALAM_PROSES
+                )
+                ->where(
+                    'draft_data->split_batch_id',
+                    $splitBatchId
+                )
                 ->orderBy('application_id')
                 ->pluck('application_ref_no')
                 ->filter()
@@ -1313,15 +1828,20 @@ class WaterApplicationController extends Controller
                 ->all();
         }
 
-        $detail['invoice_items'] = $invoiceItems;
-        $detail['processing_invoice_activities'] = $processingInvoiceActivities;
-        $detail['application_ref_nos'] = $applicationRefNos;
-        $detail['application_nos'] = $applicationRefNos;
+        $detail['invoice_items'] =
+            $invoiceItems;
 
-        return response()->json([
-            'success' => true,
-            'data' => $detail,
-        ]);
+        $detail['receipt_items'] =
+            $receiptItems;
+
+        $detail['processing_invoice_activities'] =
+            $processingInvoiceActivities;
+
+        $detail['application_ref_nos'] =
+            $applicationRefNos;
+
+        $detail['application_nos'] =
+            $applicationRefNos;
     }
 
     public function destroyDraft(Request $request, LsankApplication $application)
@@ -1786,6 +2306,9 @@ class WaterApplicationController extends Controller
                 'user_id' =>
                     $application->user_id,
 
+                'payment_type' =>
+                    'Fi Pemprosesan',
+
                 'invoice_date' =>
                     now()->toDateString(),
 
@@ -1813,6 +2336,9 @@ class WaterApplicationController extends Controller
                     $this->nextInvoiceRunningNumber(),
                     '01'
                 ),
+
+            'payment_type' =>
+                    'Fi Pemprosesan',
 
             'invoice_date' =>
                 now()->toDateString(),
@@ -1914,6 +2440,122 @@ class WaterApplicationController extends Controller
         );
 
         return $refNo;
+    }
+
+    private function receiptFeeTypeCode(
+        ?string $paymentType
+    ): string {
+        $value = strtolower(
+            trim((string) $paymentType)
+        );
+
+        return match (true) {
+            str_contains($value, 'pemprosesan') =>
+                '01',
+
+            str_contains($value, 'sekuriti') =>
+                '02',
+
+            str_contains($value, 'caj') =>
+                '04',
+
+            str_contains($value, 'lesen') =>
+                '03',
+
+            default =>
+                '01',
+        };
+    }
+
+    private function nextReceiptRunningNumber(): int
+    {
+        $year = now()->format('Y');
+
+        $prefix =
+            'RESIT-' .
+            $year .
+            '-';
+
+        $latestReceiptNo = LsankReceipt::query()
+            ->where(
+                'receipt_no',
+                'like',
+                $prefix . '%'
+            )
+            ->lockForUpdate()
+            ->orderByRaw(
+                "CAST(
+                    SUBSTRING_INDEX(
+                        SUBSTRING_INDEX(
+                            receipt_no,
+                            '-',
+                            3
+                        ),
+                        '-',
+                        -1
+                    ) AS UNSIGNED
+                ) DESC"
+            )
+            ->value('receipt_no');
+
+        if (empty($latestReceiptNo)) {
+            return 1;
+        }
+
+        $parts = explode(
+            '-',
+            $latestReceiptNo
+        );
+
+        if (
+            count($parts) < 4 ||
+            !isset($parts[2]) ||
+            !is_numeric($parts[2])
+        ) {
+            return 1;
+        }
+
+        $latestRunningNumber =
+            (int) $parts[2];
+
+        return $latestRunningNumber + 1;
+    }
+
+    private function generateReceiptNoByRunningNumber(
+        int $runningNumber,
+        string $feeTypeCode
+    ): string {
+        $year = now()->format('Y');
+
+        do {
+            $runningNo = str_pad(
+                $runningNumber,
+                4,
+                '0',
+                STR_PAD_LEFT
+            );
+
+            $receiptNo =
+                'RESIT-' .
+                $year .
+                '-' .
+                $runningNo .
+                '-' .
+                $feeTypeCode;
+
+            $exists = LsankReceipt::query()
+                ->where(
+                    'receipt_no',
+                    $receiptNo
+                )
+                ->exists();
+
+            if (!$exists) {
+                return $receiptNo;
+            }
+
+            $runningNumber++;
+        } while (true);
     }
 
 }

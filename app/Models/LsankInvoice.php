@@ -34,4 +34,13 @@ class LsankInvoice extends Model
             'application_id'
         );
     }
+
+    public function receipt()
+    {
+        return $this->hasOne(
+            LsankReceipt::class,
+            'invoice_id',
+            'invoice_id'
+        );
+    }
 }

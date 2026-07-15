@@ -756,6 +756,17 @@ class WaterApplicationController extends Controller
 
                 $paidApplications[] = $splitApplication;
                 $paidInvoices[] = $invoice;
+            $firstApplication =
+                $paidApplications[0];
+
+            $firstInvoice =
+                $paidInvoices[0];
+
+            $firstReceipt =
+                $paidReceipts[0];
+
+            $receiptNos = collect($paidReceipts)
+                ->pluck('receipt_no')
             }
 
             $firstApplication = $paidApplications[0];

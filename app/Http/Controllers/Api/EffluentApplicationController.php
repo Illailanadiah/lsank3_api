@@ -432,83 +432,147 @@ class EffluentApplicationController extends Controller
         });
     }
 
-    public function generateInvoice(Request $request, LsankApplication $application)
-    {
-        if ((int) $application->user_id !== (int) $request->user()->user_id) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Permohonan tidak dijumpai.',
-            ], 404);
-        }
+    public function generateInvoice(
+    Request $request,
+    LsankApplication $application
+) {
+    if (
+        (int) $application->user_id !==
+        (int) $request->user()->user_id
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Permohonan tidak dijumpai.',
+        ], 404);
+    }
 
-        $typeId = $this->applicationTypeId(self::TYPE_CODE, self::TYPE_NAME);
+    $typeId = $this->applicationTypeId(
+        self::TYPE_CODE,
+        self::TYPE_NAME
+    );
 
-        if ((int) $application->application_type_id !== (int) $typeId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Permohonan efluen tidak dijumpai.',
-            ], 404);
-        }
+    if (
+        (int) $application->application_type_id !==
+        (int) $typeId
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Permohonan efluen tidak dijumpai.',
+        ], 404);
+    }
 
-        if (in_array($application->application_status, [
-            LsankApplication::STATUS_DALAM_PROSES,
-            LsankApplication::STATUS_LULUS,
-            LsankApplication::STATUS_GAGAL,
-        ], true)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Permohonan ini telah dihantar atau telah selesai diproses.',
-            ], 422);
-        }
+    if (
+        in_array(
+            $application->application_status,
+            [
+                LsankApplication::STATUS_DALAM_PROSES,
+                LsankApplication::STATUS_LULUS,
+                LsankApplication::STATUS_GAGAL,
+            ],
+            true
+        )
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' =>
+                'Permohonan ini telah dihantar atau telah selesai diproses.',
+        ], 422);
+    }
 
-        $statusId = $this->applicationStatusId('payment', 'Fi Pemprosesan', 2);
-
-        $application->application_status_id = $statusId;
-        $application->application_status = LsankApplication::STATUS_FI_PEMPROSESAN;
-        $application->payment_status = LsankApplication::PAYMENT_MENUNGGU_BAYARAN;
-        $application->submitted_at = null;
-        $application->save();
+    return DB::transaction(function () use ($application) {
+        $statusId = $this->applicationStatusId(
+            'payment',
+            'Fi Pemprosesan',
+            2
+        );
 
         $fees = $this->calculateEffluentFees($application);
 
-        $invoice = $this->createOrUpdateProcessingInvoice($application, $fees);
+        $invoice = $this->createOrUpdateProcessingInvoice(
+            $application,
+            $fees
+        );
+
+        $application->application_status_id = $statusId;
+        $application->application_status =
+            LsankApplication::STATUS_FI_PEMPROSESAN;
+        $application->payment_status =
+            LsankApplication::PAYMENT_MENUNGGU_BAYARAN;
+        $application->submitted_at = null;
+        $application->save();
 
         return response()->json([
             'success' => true,
-            'message' => 'Invois fi pemprosesan efluen berjaya dijana.',
+            'message' =>
+                'Invois fi pemprosesan efluen berjaya dijana.',
             'data' => [
                 'id' => $application->application_id,
-                'application_id' => $application->application_id,
-                'application_ids' => [$application->application_id],
+                'application_id' =>
+                    $application->application_id,
+                'application_ids' => [
+                    $application->application_id,
+                ],
 
-                'application_no' => $application->application_ref_no,
-                'application_ref_no' => $application->application_ref_no,
+                'application_no' =>
+                    $application->application_ref_no,
+                'application_ref_no' =>
+                    $application->application_ref_no,
 
                 'invoice_id' => $invoice->invoice_id,
                 'invoice_ids' => [$invoice->invoice_id],
                 'invoice_no' => $invoice->invoice_no,
 
-                'processing_fee' => $fees['processing_fee'],
-                'processing_fee_display' => 'RM ' . number_format($fees['processing_fee'], 2),
+                'processing_fee' =>
+                    $fees['processing_fee'],
+                'processing_fee_display' =>
+                    'RM ' . number_format(
+                        $fees['processing_fee'],
+                        2
+                    ),
 
-                'security_fee' => $fees['security_fee'],
-                'security_fee_display' => 'RM ' . number_format($fees['security_fee'], 2),
+                'security_fee' =>
+                    $fees['security_fee'],
+                'security_fee_display' =>
+                    'RM ' . number_format(
+                        $fees['security_fee'],
+                        2
+                    ),
 
-                'license_fee' => $fees['license_fee'],
-                'license_fee_display' => 'RM ' . number_format($fees['license_fee'], 2),
+                'license_fee' =>
+                    $fees['license_fee'],
+                'license_fee_display' =>
+                    'RM ' . number_format(
+                        $fees['license_fee'],
+                        2
+                    ),
 
-                'charge_fee' => $fees['charge_fee'],
-                'charge_fee_display' => 'RM ' . number_format($fees['charge_fee'], 2),
+                'charge_fee' =>
+                    $fees['charge_fee'],
+                'charge_fee_display' =>
+                    'RM ' . number_format(
+                        $fees['charge_fee'],
+                        2
+                    ),
 
-                'charge_items' => $fees['charge_items'],
-                'total_after_approval' => $fees['total_after_approval'],
-                'total_after_approval_display' => 'RM ' . number_format($fees['total_after_approval'], 2),
+                'charge_items' =>
+                    $fees['charge_items'],
 
-                'status' => $application->application_status,
-                'payment_status' => $application->payment_status,
+                'total_after_approval' =>
+                    $fees['total_after_approval'],
+                'total_after_approval_display' =>
+                    'RM ' . number_format(
+                        $fees['total_after_approval'],
+                        2
+                    ),
+
+                'status' =>
+                    $application->application_status,
+                'payment_status' =>
+                    $application->payment_status,
             ],
         ]);
-    }
+    });
+}
 
     public function show(
     Request $request,
@@ -748,10 +812,13 @@ class EffluentApplicationController extends Controller
     return DB::transaction(function () use ($application) {
         $statusId = $this->applicationStatusId('in_process', 'Dalam Proses', 3);
 
-        $processingInvoice = LsankInvoice::where('application_id', $application->application_id)
-            ->where('invoice_no', $this->generateProcessingInvoiceNo($application))
-            ->latest('invoice_id')
-            ->first();
+        $processingInvoice = LsankInvoice::where(
+        'application_id',
+        $application->application_id
+        )
+        ->where('status', 'unpaid')
+        ->latest('invoice_id')
+        ->first();
 
         if (!$processingInvoice) {
             $fees = $this->calculateEffluentFees($application);
@@ -934,32 +1001,92 @@ public function destroyDraft(Request $request, LsankApplication $application)
         ];
     }
 
-    private function generateProcessingInvoiceNo(LsankApplication $application): string
-    {
-        $year = now()->format('Y');
-        $runningNo = str_pad($application->application_id, 4, '0', STR_PAD_LEFT);
+   private function generateProcessingInvoiceNo(
+    LsankApplication $application
+): string {
+    $year = now()->format('Y');
 
-        return 'INVOIS-' . $year . '-' . $runningNo . '-01';
+    $lastInvoice = LsankInvoice::where(
+            'invoice_no',
+            'like',
+            'INVOIS-' . $year . '-%'
+        )
+        ->orderByDesc('invoice_id')
+        ->first();
+
+    $nextNumber = 1;
+
+    if ($lastInvoice) {
+        preg_match(
+            '/INVOIS-\d{4}-(\d+)-\d+/',
+            $lastInvoice->invoice_no,
+            $matches
+        );
+
+        if (!empty($matches[1])) {
+            $nextNumber = ((int) $matches[1]) + 1;
+        }
     }
+
+    $runningNo = str_pad(
+        (string) $nextNumber,
+        4,
+        '0',
+        STR_PAD_LEFT
+    );
+
+    return 'INVOIS-' . $year . '-' . $runningNo . '-01';
+}
 
     private function createOrUpdateProcessingInvoice(
-        LsankApplication $application,
-        array $fees
-    ): LsankInvoice {
-        return LsankInvoice::updateOrCreate(
-            [
-                'application_id' => $application->application_id,
-                'invoice_no' => $this->generateProcessingInvoiceNo($application),
-            ],
-            [
-                'user_id' => $application->user_id,
-                'invoice_date' => now()->toDateString(),
-                'due_date' => now()->addDays(14)->toDateString(),
-                'total_amount' => $fees['processing_fee'],
-                'status' => 'unpaid',
-            ]
+    LsankApplication $application,
+    array $fees
+): LsankInvoice {
+    $invoiceNo = $this->generateProcessingInvoiceNo(
+        $application
+    );
+
+    $invoice = LsankInvoice::where(
+        'invoice_no',
+        $invoiceNo
+    )->first();
+
+    if (
+        $invoice &&
+        (int) $invoice->application_id !==
+        (int) $application->application_id
+    ) {
+        throw new \RuntimeException(
+            "Nombor invois {$invoiceNo} telah digunakan oleh permohonan lain."
         );
     }
+
+    if (!$invoice) {
+        $invoice = new LsankInvoice();
+        $invoice->application_id =
+            $application->application_id;
+        $invoice->invoice_no = $invoiceNo;
+        $invoice->user_id = $application->user_id;
+        $invoice->invoice_date = now()->toDateString();
+        $invoice->due_date =
+            now()->addDays(14)->toDateString();
+        $invoice->total_amount =
+            $fees['processing_fee'];
+        $invoice->status = 'unpaid';
+        $invoice->save();
+
+        return $invoice;
+    }
+
+    if ($invoice->status !== 'paid') {
+        $invoice->user_id = $application->user_id;
+        $invoice->total_amount =
+            $fees['processing_fee'];
+        $invoice->save();
+    }
+
+    return $invoice;
+}
 
     private function generateDraftReferenceNo(int $userId): string
 {

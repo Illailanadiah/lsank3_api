@@ -1258,7 +1258,7 @@ class WaterApplicationController extends Controller
                             null,
 
                         'status' =>
-                            'paid',
+                            'valid',
                     ]);
                 }
 

@@ -16,6 +16,7 @@ class LsankInvoice extends Model
         'user_id',
         'invoice_date',
         'due_date',
+        'payment_type',
         'total_amount',
         'status',
     ];

@@ -1,0 +1,703 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\LsankApplication;
+use App\Models\LsankLicense;
+use App\Models\LsankLicenseStatus;
+use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use SimpleSoftwareIO\QrCode\Facades\QrCode;
+use Throwable;
+
+class LicenseController extends Controller
+{
+    /**
+     * Return all generated licenses.
+     */
+    public function index(Request $request)
+    {
+        $query = LsankLicense::query()
+            ->with([
+                'application',
+                'status',
+            ])
+            ->latest('generated_at')
+            ->latest('license_id');
+
+        if ($request->filled('status')) {
+            $status = trim((string) $request->input('status'));
+
+            $query->whereHas('status', function ($statusQuery) use ($status) {
+                $statusQuery->where('status_code', $status)
+                    ->orWhere('status_name', $status);
+            });
+        }
+
+        if ($request->filled('license_type')) {
+            $query->where(
+                'license_type',
+                trim((string) $request->input('license_type'))
+            );
+        }
+
+        if ($request->filled('search')) {
+            $search = trim((string) $request->input('search'));
+
+            $query->where(function ($builder) use ($search) {
+                $builder
+                    ->where('license_no', 'like', "%{$search}%")
+                    ->orWhere('file_no', 'like', "%{$search}%")
+                    ->orWhere('holder_name', 'like', "%{$search}%")
+                    ->orWhere('license_type', 'like', "%{$search}%")
+                    ->orWhere('activity_name', 'like', "%{$search}%")
+                    ->orWhere('activity_location', 'like', "%{$search}%");
+            });
+        }
+
+        $licenses = $query->get()->map(
+            fn (LsankLicense $license) => $this->formatLicense($license)
+        );
+
+        return response()->json([
+            'success' => true,
+            'licenses' => $licenses,
+        ]);
+    }
+
+    /**
+     * Return one license.
+     */
+    public function show(LsankLicense $license)
+    {
+        $license->load([
+            'application',
+            'status',
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'license' => $this->formatLicense($license),
+        ]);
+    }
+
+    /**
+     * Generate one license after the application is approved.
+     *
+     * Safe to call repeatedly. application_id is checked first.
+     */
+    public function generateForApprovedApplication(
+        LsankApplication $application
+    ): LsankLicense {
+        $application->refresh();
+
+        $applicationStatus = strtolower(
+            trim((string) $application->application_status)
+        );
+
+        $reviewData = $this->parseJsonMap($application->review_data);
+
+        $workflowStage = strtolower(
+            trim((string) (
+                $reviewData['workflow_stage']
+                ?? $application->workflow_stage
+                ?? ''
+            ))
+        );
+
+        $isApproved =
+            in_array($applicationStatus, ['lulus', 'approved'], true) ||
+            $workflowStage === 'director_approved';
+
+        if (!$isApproved) {
+            throw new \RuntimeException(
+                'Lesen hanya boleh dijana selepas permohonan diluluskan.'
+            );
+        }
+
+        return DB::transaction(function () use (
+            $application,
+            $reviewData
+        ) {
+            $existingLicense = LsankLicense::query()
+                ->where('application_id', $application->application_id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($existingLicense) {
+                $this->ensureArtifacts($existingLicense);
+
+                return $existingLicense->fresh([
+                    'application',
+                    'status',
+                ]);
+            }
+
+            $activeStatusId = $this->activeLicenseStatusId();
+
+            $licenseStartDate = data_get(
+                $reviewData,
+                'license_start_date',
+                now()->toDateString()
+            );
+
+            $licenseEndDate = data_get(
+                $reviewData,
+                'license_end_date',
+                now()->addYear()->subDay()->toDateString()
+            );
+
+            $licenseNo = $this->nextLicenseNumber($application);
+            $qrToken = (string) Str::uuid();
+            $verificationUrl = url(
+                "/api/licenses/verify/{$qrToken}"
+            );
+
+            $license = LsankLicense::create([
+                'license_no' => $licenseNo,
+                'file_no' => $application->application_ref_no,
+                'application_id' => $application->application_id,
+                'holder_name' => $this->resolveHolderName($application),
+                'license_type' => $this->resolveLicenseType($application),
+                'activity_name' => $this->resolveActivityName($application),
+                'activity_location' => $this->resolveActivityLocation(
+                    $application
+                ),
+                'start_date' => $licenseStartDate,
+                'expiry_date' => $licenseEndDate,
+                'license_status_id' => $activeStatusId,
+                'qr_token' => $qrToken,
+                'qr_payload_hash' => hash(
+                    'sha256',
+                    $verificationUrl
+                ),
+                'generated_at' => now(),
+            ]);
+
+            $this->buildArtifacts($license);
+
+            return $license->fresh([
+                'application',
+                'status',
+            ]);
+        });
+    }
+
+    /**
+     * Optional API endpoint for manually generating a license
+     * from an approved application.
+     */
+    public function generateFromApplication(
+        LsankApplication $application
+    ) {
+        try {
+            $license = $this->generateForApprovedApplication(
+                $application
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Lesen berjaya dijana.',
+                'license' => $this->formatLicense($license),
+            ], 201);
+        } catch (Throwable $e) {
+            report($e);
+
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+    }
+
+    /**
+     * Download PDF once.
+     */
+    public function downloadPdf(
+        Request $request,
+        LsankLicense $license
+    ) {
+        if ($license->pdf_downloaded_at !== null) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'Fail lesen hanya boleh dimuat turun sekali.',
+            ], 409);
+        }
+
+        $this->ensureArtifacts($license);
+
+        if (
+            empty($license->license_pdf_path) ||
+            !Storage::disk('local')->exists(
+                $license->license_pdf_path
+            )
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Fail PDF lesen tidak dijumpai.',
+            ], 404);
+        }
+
+        $license->forceFill([
+            'pdf_downloaded_at' => now(),
+        ])->save();
+
+        return Storage::disk('local')->download(
+            $license->license_pdf_path,
+            "{$license->license_no}.pdf",
+            [
+                'Content-Type' => 'application/pdf',
+            ]
+        );
+    }
+
+    /**
+     * Open PDF inline once for printing.
+     *
+     * Note: the backend can record one print-open event, but the browser
+     * cannot guarantee the user physically printed the document.
+     */
+    public function printPdf(
+        Request $request,
+        LsankLicense $license
+    ) {
+        if ($license->printed_at !== null) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'Lesen hanya boleh dibuka untuk cetakan sekali.',
+            ], 409);
+        }
+
+        $this->ensureArtifacts($license);
+
+        if (
+            empty($license->license_pdf_path) ||
+            !Storage::disk('local')->exists(
+                $license->license_pdf_path
+            )
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Fail PDF lesen tidak dijumpai.',
+            ], 404);
+        }
+
+        $license->forceFill([
+            'printed_at' => now(),
+        ])->save();
+
+        return response(
+            Storage::disk('local')->get(
+                $license->license_pdf_path
+            ),
+            200,
+            [
+                'Content-Type' => 'application/pdf',
+                'Content-Disposition' =>
+                    'inline; filename="'
+                    . $license->license_no
+                    . '.pdf"',
+            ]
+        );
+    }
+
+    /**
+     * Download QR PNG once.
+     */
+    public function downloadQr(
+        Request $request,
+        LsankLicense $license
+    ) {
+        if ($license->qr_downloaded_at !== null) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'Kod QR hanya boleh dimuat turun sekali.',
+            ], 409);
+        }
+
+        $this->ensureArtifacts($license);
+
+        if (
+            empty($license->qr_code_path) ||
+            !Storage::disk('local')->exists(
+                $license->qr_code_path
+            )
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Fail PNG kod QR tidak dijumpai.',
+            ], 404);
+        }
+
+        $license->forceFill([
+            'qr_downloaded_at' => now(),
+        ])->save();
+
+        return Storage::disk('local')->download(
+            $license->qr_code_path,
+            "{$license->license_no}-QR.png",
+            [
+                'Content-Type' => 'image/png',
+            ]
+        );
+    }
+
+    /**
+     * Public QR verification endpoint.
+     */
+    public function verify(string $token)
+    {
+        $license = LsankLicense::query()
+            ->with([
+                'application',
+                'status',
+            ])
+            ->where('qr_token', $token)
+            ->first();
+
+        if (!$license) {
+            return response()->json([
+                'valid' => false,
+                'message' => 'Kod QR lesen tidak sah.',
+            ], 404);
+        }
+
+        $expired = $license->expiry_date !== null &&
+            now()->startOfDay()->gt(
+                $license->expiry_date->copy()->startOfDay()
+            );
+
+        $statusCode = strtolower(
+            trim((string) (
+                $license->status?->status_code
+                ?? $license->status?->status_name
+                ?? ''
+            ))
+        );
+
+        $active = !$expired &&
+            (
+                $statusCode === '' ||
+                str_contains($statusCode, 'aktif') ||
+                str_contains($statusCode, 'active')
+            );
+
+        return response()->json([
+            'valid' => $active,
+            'license_no' => $license->license_no,
+            'file_no' => $license->file_no,
+            'holder_name' => $license->holder_name,
+            'license_type' => $license->license_type,
+            'activity_name' => $license->activity_name,
+            'activity_location' => $license->activity_location,
+            'start_date' => optional(
+                $license->start_date
+            )?->format('Y-m-d'),
+            'expiry_date' => optional(
+                $license->expiry_date
+            )?->format('Y-m-d'),
+            'status' => $expired
+                ? 'expired'
+                : (
+                    $license->status?->status_name
+                    ?? 'Aktif'
+                ),
+        ]);
+    }
+
+    private function ensureArtifacts(
+        LsankLicense $license
+    ): void {
+        $missingPdf =
+            empty($license->license_pdf_path) ||
+            !Storage::disk('local')->exists(
+                $license->license_pdf_path
+            );
+
+        $missingQr =
+            empty($license->qr_code_path) ||
+            !Storage::disk('local')->exists(
+                $license->qr_code_path
+            );
+
+        if ($missingPdf || $missingQr) {
+            $this->buildArtifacts($license);
+        }
+    }
+
+    private function buildArtifacts(
+        LsankLicense $license
+    ): void {
+        $license->loadMissing([
+            'application',
+            'status',
+        ]);
+
+        $verificationUrl = url(
+            "/api/licenses/verify/{$license->qr_token}"
+        );
+
+        $safeLicenseNo = str_replace(
+            ['/', '\\', ' '],
+            '-',
+            $license->license_no
+        );
+
+        $qrRelativePath =
+            "licenses/qr/{$safeLicenseNo}.png";
+
+        $pdfRelativePath =
+            "licenses/pdf/{$safeLicenseNo}.pdf";
+
+        Storage::disk('local')->makeDirectory(
+            'licenses/qr'
+        );
+
+        Storage::disk('local')->makeDirectory(
+            'licenses/pdf'
+        );
+
+        $qrPng = QrCode::format('png')
+            ->size(420)
+            ->margin(1)
+            ->errorCorrection('H')
+            ->generate($verificationUrl);
+
+        Storage::disk('local')->put(
+            $qrRelativePath,
+            $qrPng
+        );
+
+        $pdf = Pdf::loadView(
+            'licenses.certificate',
+            [
+                'license' => $license,
+                'application' => $license->application,
+                'qrDataUri' =>
+                    'data:image/png;base64,'
+                    . base64_encode($qrPng),
+                'verificationUrl' => $verificationUrl,
+            ]
+        )->setPaper('a4', 'portrait');
+
+        Storage::disk('local')->put(
+            $pdfRelativePath,
+            $pdf->output()
+        );
+
+        $license->forceFill([
+            'qr_code_path' => $qrRelativePath,
+            'license_pdf_path' => $pdfRelativePath,
+        ])->save();
+    }
+
+    private function nextLicenseNumber(
+        LsankApplication $application
+    ): string {
+        $year = now()->format('Y');
+
+        $typeName = strtolower(
+            trim((string) (
+                $application->application_type?->type_name
+                ?? $application->license_type
+                ?? ''
+            ))
+        );
+
+        $prefix = str_contains($typeName, 'efluen')
+            ? 'EF'
+            : 'WB';
+
+        $lastLicense = LsankLicense::query()
+            ->whereYear('created_at', $year)
+            ->where('license_no', 'like', "{$prefix}-{$year}-%")
+            ->lockForUpdate()
+            ->latest('license_id')
+            ->first();
+
+        $lastRunningNumber = 0;
+
+        if ($lastLicense) {
+            $segments = explode(
+                '-',
+                $lastLicense->license_no
+            );
+
+            $lastRunningNumber = (int) end($segments);
+        }
+
+        return sprintf(
+            '%s-%s-%04d',
+            $prefix,
+            $year,
+            $lastRunningNumber + 1
+        );
+    }
+
+    private function activeLicenseStatusId(): ?int
+    {
+        if (!class_exists(LsankLicenseStatus::class)) {
+            return null;
+        }
+
+        $status = LsankLicenseStatus::query()
+            ->whereIn('status_code', [
+                'active',
+                'aktif',
+            ])
+            ->first();
+
+        if (!$status) {
+            $status = LsankLicenseStatus::query()->create([
+                'status_code' => 'active',
+                'status_name' => 'Aktif',
+            ]);
+        }
+
+        return (int) $status->license_status_id;
+    }
+
+    private function resolveHolderName(
+        LsankApplication $application
+    ): string {
+        return trim((string) (
+            $application->business_name
+            ?? $application->applicant_name
+            ?? $application->user?->name
+            ?? '-'
+        ));
+    }
+
+    private function resolveLicenseType(
+        LsankApplication $application
+    ): string {
+        return trim((string) (
+            $application->license_type
+            ?? $application->application_type?->type_name
+            ?? 'Aktiviti Badan Perairan'
+        ));
+    }
+
+    private function resolveActivityName(
+        LsankApplication $application
+    ): string {
+        return trim((string) (
+            $application->activity_name
+            ?? $application->activity_type
+            ?? $application->activity_details
+            ?? '-'
+        ));
+    }
+
+    private function resolveActivityLocation(
+        LsankApplication $application
+    ): string {
+        return trim((string) (
+            $application->activity_location
+            ?? $application->location
+            ?? $application->district
+            ?? '-'
+        ));
+    }
+
+    private function parseJsonMap(
+        mixed $value
+    ): array {
+        if (is_array($value)) {
+            return $value;
+        }
+
+        if (is_object($value)) {
+            return (array) $value;
+        }
+
+        if (!is_string($value)) {
+            return [];
+        }
+
+        $decoded = json_decode($value, true);
+
+        return is_array($decoded)
+            ? $decoded
+            : [];
+    }
+
+    private function formatLicense(
+        LsankLicense $license
+    ): array {
+        $license->loadMissing([
+            'application',
+            'status',
+        ]);
+
+        return [
+            'license_id' => $license->license_id,
+            'application_id' => $license->application_id,
+            'license_no' => $license->license_no,
+            'file_no' => $license->file_no,
+            'holder_name' => $license->holder_name,
+            'license_type' => $license->license_type,
+            'activity_name' => $license->activity_name,
+            'activity_location' => $license->activity_location,
+            'start_date' => optional(
+                $license->start_date
+            )?->format('Y-m-d'),
+            'expiry_date' => optional(
+                $license->expiry_date
+            )?->format('Y-m-d'),
+            'license_status_id' => $license->license_status_id,
+            'status' => $license->status?->status_name
+                ?? 'Aktif',
+            'generated_at' => optional(
+                $license->generated_at
+            )?->toIso8601String(),
+
+            'can_download_pdf' =>
+                $license->pdf_downloaded_at === null,
+
+            'can_print' =>
+                $license->printed_at === null,
+
+            'can_download_qr' =>
+                $license->qr_downloaded_at === null,
+
+            'pdf_downloaded_at' => optional(
+                $license->pdf_downloaded_at
+            )?->toIso8601String(),
+
+            'printed_at' => optional(
+                $license->printed_at
+            )?->toIso8601String(),
+
+            'qr_downloaded_at' => optional(
+                $license->qr_downloaded_at
+            )?->toIso8601String(),
+
+            'download_pdf_url' => route(
+                'licenses.download-pdf',
+                $license
+            ),
+
+            'print_pdf_url' => route(
+                'licenses.print-pdf',
+                $license
+            ),
+
+            'download_qr_url' => route(
+                'licenses.download-qr',
+                $license
+            ),
+
+            'verify_url' => url(
+                "/api/licenses/verify/{$license->qr_token}"
+            ),
+        ];
+    }
+}

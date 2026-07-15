@@ -50,10 +50,10 @@ class LsankApplication extends Model
         'review_data',
         'submitted_data',
 
-        // Temporary legacy fields. Keep these until all old controllers/screens are migrated.
+        // Legacy fields. Keep until older controllers/screens are migrated.
         'applicant_id',
         'application_type_id',
-        'application_status',
+        'application_status_id',
         'application_category',
 
         'applicant_type',
@@ -93,45 +93,106 @@ class LsankApplication extends Model
         'latitude' => 'decimal:8',
     ];
 
+    /*
+    |--------------------------------------------------------------------------
+    | Relationships
+    |--------------------------------------------------------------------------
+    */
+
     public function user()
     {
-        return $this->belongsTo(LsankUser::class, 'user_id', 'user_id');
+        return $this->belongsTo(
+            LsankUser::class,
+            'user_id',
+            'user_id'
+        );
     }
 
     public function applicant()
     {
-        return $this->belongsTo(LsankApplicant::class, 'applicant_id', 'applicant_id');
+        return $this->belongsTo(
+            LsankApplicant::class,
+            'applicant_id',
+            'applicant_id'
+        );
     }
 
     public function type()
     {
-        return $this->belongsTo(LsankApplicationType::class, 'application_type_id', 'application_type_id');
+        return $this->belongsTo(
+            LsankApplicationType::class,
+            'application_type_id',
+            'application_type_id'
+        );
+    }
+
+    /**
+     * Alias used by LicenseController and other newer code.
+     */
+    public function applicationType()
+    {
+        return $this->type();
     }
 
     public function status()
     {
-        return $this->belongsTo(LsankApplicationStatus::class, 'application_status_id', 'application_status_id');
+        return $this->belongsTo(
+            LsankApplicationStatus::class,
+            'application_status_id',
+            'application_status_id'
+        );
     }
 
     public function waterBody()
     {
-        return $this->hasOne(LsankWaterBodyApplication::class, 'application_id', 'application_id');
+        return $this->hasOne(
+            LsankWaterBodyApplication::class,
+            'application_id',
+            'application_id'
+        );
     }
 
     public function effluent()
     {
-        return $this->hasOne(LsankEffluentApplication::class, 'application_id', 'application_id');
+        return $this->hasOne(
+            LsankEffluentApplication::class,
+            'application_id',
+            'application_id'
+        );
     }
 
     public function documents()
     {
-        return $this->hasMany(LsankApplicationDocument::class, 'application_id', 'application_id');
+        return $this->hasMany(
+            LsankApplicationDocument::class,
+            'application_id',
+            'application_id'
+        );
     }
 
     public function reviews()
     {
-        return $this->hasMany(LsankApplicationReview::class, 'application_id', 'application_id');
+        return $this->hasMany(
+            LsankApplicationReview::class,
+            'application_id',
+            'application_id'
+        );
     }
+
+    public function license()
+    {
+        return $this->hasOne(
+            LsankLicense::class,
+            'application_id',
+            'application_id'
+        );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Accessors
+    |--------------------------------------------------------------------------
+    */
 
     public function getDisplayStatusAttribute(): string
     {
@@ -154,6 +215,12 @@ class LsankApplication extends Model
             default => 'Belum Bayar',
         };
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Helpers
+    |--------------------------------------------------------------------------
+    */
 
     public function isWaterApplication(): bool
     {
@@ -182,8 +249,39 @@ class LsankApplication extends Model
         return $this->application_status === self::STATUS_DALAM_PROSES;
     }
 
+    public function isApproved(): bool
+    {
+        return $this->application_status === self::STATUS_LULUS;
+    }
+
+    public function isRejected(): bool
+    {
+        return $this->application_status === self::STATUS_GAGAL;
+    }
+
     public function isPaid(): bool
     {
         return $this->payment_status === self::PAYMENT_SUDAH_BAYAR;
+    }
+
+    public function workflowStage(): string
+    {
+        $reviewData = is_array($this->review_data)
+            ? $this->review_data
+            : [];
+
+        return strtolower(
+            trim((string) (
+                $reviewData['workflow_stage']
+                ?? data_get($reviewData, 'meta.workflow_stage')
+                ?? ''
+            ))
+        );
+    }
+
+    public function isDirectorApproved(): bool
+    {
+        return $this->isApproved()
+            && $this->workflowStage() === 'director_approved';
     }
 }

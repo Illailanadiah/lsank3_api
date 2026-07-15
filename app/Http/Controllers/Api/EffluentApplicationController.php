@@ -848,8 +848,8 @@ class EffluentApplicationController extends Controller
             LsankApplication::PAYMENT_SUDAH_BAYAR;
 
         $application->submitted_at = now();
-        $application->submitted_data = $application->draft_data;
         $application->save();
+        $application->submitted_data = $application->draft_data;
 
         $application->remarks = trim(
             (($application->remarks ?? '') . "\nBayaran simulasi berjaya pada " . now()->format('d/m/Y H:i'))

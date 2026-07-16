@@ -43,6 +43,17 @@ class EffluentApplicationController extends Controller
                 $application,
                 self::TYPE_NAME
             );
+            $item['submitted_date'] = optional(
+                $application->submitted_at ?? $application->created_at
+            )->format('Y-m-d') ?? '-';
+
+            $item['submitted_at'] = optional(
+                $application->submitted_at ?? $application->created_at
+            )->toDateTimeString();
+
+            $item['created_at'] = optional(
+                $application->created_at
+            )->toDateTimeString();
 
             $serviceName =
                 $application->effluent?->serviceType?->service_name
@@ -222,7 +233,7 @@ class EffluentApplicationController extends Controller
     public function saveDraft(Request $request)
     {
         $validated = $request->validate([
-            'application_id' => ['nullable', 'integer', 'exists:lsank_applications,application_id'],
+            'application_id' => ['nullable', 'integer', 'min:1'],
 
             'applicant_type' => ['nullable', 'string', 'max:100'],
             'applicant_name' => ['nullable', 'string', 'max:255'],
@@ -267,11 +278,24 @@ class EffluentApplicationController extends Controller
 
         return DB::transaction(function () use ($validated, $user, $typeId, $statusId, $phoneColumn) {
             $application = null;
+            $requestedApplicationId = $validated['application_id'] ?? null;
 
-            if (!empty($validated['application_id'])) {
-                $application = LsankApplication::where('application_id', $validated['application_id'])
+            if ($requestedApplicationId) {
+                $application = LsankApplication::where(
+                        'application_id',
+                        $requestedApplicationId
+                    )
                     ->where('user_id', $user->user_id)
+                    ->where('application_type_id', $typeId)
                     ->first();
+
+                if (!$application) {
+                    return response()->json([
+                        'success' => false,
+                        'code' => 'DRAFT_NOT_FOUND',
+                        'message' => 'Draf permohonan tidak lagi wujud.',
+                    ], 404);
+                }
             }
 
             if (!$application) {
@@ -1234,27 +1258,49 @@ public function destroyDraft(Request $request, LsankApplication $application)
     private function createOrUpdateProcessingInvoice(
     LsankApplication $application,
     array $fees
-): LsankInvoice {
-    $invoiceNo = $this->generateProcessingInvoiceNo(
-        $application
-    );
+    ): LsankInvoice {
+        // Satu permohonan hanya boleh mempunyai satu invois
+        // fi pemprosesan yang masih aktif.
+        $invoice = LsankInvoice::where(
+            'application_id',
+            $application->application_id
+        )
+            ->whereNotIn('status', [
+                'cancelled',
+                'void',
+            ])
+            ->latest('invoice_id')
+            ->first();
 
-    $invoice = LsankInvoice::where(
-        'invoice_no',
-        $invoiceNo
-    )->first();
+        // Kalau invois sudah wujud, guna invois yang sama.
+        if ($invoice) {
+            if ($invoice->status !== 'paid') {
+                $invoice->user_id = $application->user_id;
+                $invoice->total_amount =
+                    $fees['processing_fee'];
+                $invoice->save();
+            }
 
-    if (
-        $invoice &&
-        (int) $invoice->application_id !==
-        (int) $application->application_id
-    ) {
-        throw new \RuntimeException(
-            "Nombor invois {$invoiceNo} telah digunakan oleh permohonan lain."
+            return $invoice;
+        }
+
+        // Hanya generate nombor invois apabila invois
+        // memang belum pernah diwujudkan.
+        $invoiceNo = $this->generateProcessingInvoiceNo(
+            $application
         );
-    }
 
-    if (!$invoice) {
+        $invoiceNoExists = LsankInvoice::where(
+            'invoice_no',
+            $invoiceNo
+        )->exists();
+
+        if ($invoiceNoExists) {
+            throw new \RuntimeException(
+                "Nombor invois {$invoiceNo} telah digunakan."
+            );
+        }
+
         $invoice = new LsankInvoice();
         $invoice->application_id =
             $application->application_id;
@@ -1270,16 +1316,6 @@ public function destroyDraft(Request $request, LsankApplication $application)
 
         return $invoice;
     }
-
-    if ($invoice->status !== 'paid') {
-        $invoice->user_id = $application->user_id;
-        $invoice->total_amount =
-            $fees['processing_fee'];
-        $invoice->save();
-    }
-
-    return $invoice;
-}
 
     private function generateDraftReferenceNo(int $userId): string
 {

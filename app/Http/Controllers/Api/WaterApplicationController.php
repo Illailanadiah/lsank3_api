@@ -205,14 +205,23 @@ class WaterApplicationController extends Controller
                     'current_step' => $application->current_step ?? 0,
                     'draft_data' => $application->draft_data,
 
-                    'submitted_at' => optional($application->submitted_at)->toDateTimeString(),
+                    'submitted_at' => optional($application->submitted_at)
+                        ->toDateTimeString(),
 
                     'submitted_date' => optional(
                         $application->submitted_at ?? $application->created_at
                     )->format('d M Y') ?? '-',
 
-                    'created_at' => optional($application->created_at)->toDateTimeString(),
-                    'updated_at' => optional($application->updated_at)->toDateTimeString(),
+                    // Digunakan oleh Flutter untuk sorting.
+                    'sort_date' => optional(
+                        $application->submitted_at ?? $application->created_at
+                    )->toIso8601String(),
+
+                    'created_at' => optional($application->created_at)
+                        ->toDateTimeString(),
+
+                    'updated_at' => optional($application->updated_at)
+                        ->toDateTimeString(),
 
                     'fees' => $fees,
                     'invoice_items' => $invoiceItems,
@@ -1827,7 +1836,7 @@ class WaterApplicationController extends Controller
             LsankApplication::STATUS_FI_PEMPROSESAN => 'Fi Pemprosesan',
             LsankApplication::STATUS_DALAM_PROSES => 'Dalam Proses',
             LsankApplication::STATUS_LULUS => 'Lulus',
-            LsankApplication::STATUS_GAGAL => 'Gagal',
+            LsankApplication::STATUS_GAGAL => 'Ditolak',
             default => 'Draf',
         };
     }

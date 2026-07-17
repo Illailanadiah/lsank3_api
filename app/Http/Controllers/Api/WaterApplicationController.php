@@ -24,11 +24,11 @@ class WaterApplicationController extends Controller
         $typeId = $this->applicationTypeId(self::TYPE_CODE, self::TYPE_NAME);
 
         $applications = LsankApplication::with([
-                'applicant',
-                'status',
-                'type',
-                'waterBody',
-            ])
+            'applicant',
+            'status',
+            'type',
+            'waterBody',
+        ])
             ->where('user_id', $request->user()->user_id)
             ->where('application_type_id', $typeId)
             ->latest('application_id')
@@ -44,7 +44,7 @@ class WaterApplicationController extends Controller
                     : [];
 
                 $splitBatchId = $draftData['split_batch_id'] ?? null;
-
+ 
                 $invoiceApplicationIds = [$application->application_id];
 
                 if ($splitBatchId) {
@@ -82,7 +82,7 @@ class WaterApplicationController extends Controller
                     ?? $draftData['selected_activities']
                     ?? [$application->activity_name ?? $application->activity_details ?? '-'];
 
-               $invoiceItems = LsankInvoice::with('application')
+                $invoiceItems = LsankInvoice::with('application')
                     ->where('application_id', $application->application_id)
                     ->orderBy('invoice_id')
                     ->get()
@@ -94,8 +94,8 @@ class WaterApplicationController extends Controller
                             ?? $invoiceApplication?->activity_details
                             ?? (
                                 is_array($processingInvoiceActivities) && isset($processingInvoiceActivities[$itemIndex])
-                                    ? $processingInvoiceActivities[$itemIndex]
-                                    : ($application->activity_name ?? $application->activity_details ?? null)
+                                ? $processingInvoiceActivities[$itemIndex]
+                                : ($application->activity_name ?? $application->activity_details ?? null)
                             );
 
                         $applicationRefNo = $invoiceApplication?->application_ref_no
@@ -138,14 +138,13 @@ class WaterApplicationController extends Controller
                         true
                     ) ||
                     $application->payment_status ===
-                        LsankApplication::PAYMENT_SUDAH_BAYAR
+                    LsankApplication::PAYMENT_SUDAH_BAYAR
                 ) {
                     $paidInvoice = collect($invoiceItems)
                         ->first(function ($item) use ($application) {
-                            return
-                                ($item['paid'] ?? false) === true &&
+                            return ($item['paid'] ?? false) === true &&
                                 (int) ($item['application_id'] ?? 0) ===
-                                    (int) $application->application_id;
+                                (int) $application->application_id;
                         });
 
                     if ($paidInvoice) {
@@ -156,61 +155,61 @@ class WaterApplicationController extends Controller
                             * gunakan receipt_id sebenar.
                             */
                             'receipt_id' =>
-                                $application->application_id,
+                            $application->application_id,
 
                             'application_id' =>
-                                $application->application_id,
+                            $application->application_id,
 
                             'receipt_no' =>
-                                'RESIT-' .
+                            'RESIT-' .
                                 $year . '-' .
                                 $runningNo . '-01',
 
                             'invoice_id' =>
-                                $paidInvoice['invoice_id'],
+                            $paidInvoice['invoice_id'],
 
                             'invoice_no' =>
-                                $paidInvoice['invoice_no'],
+                            $paidInvoice['invoice_no'],
 
                             'application_ref_no' =>
-                                $paidInvoice['application_ref_no']
+                            $paidInvoice['application_ref_no']
                                 ?? $application->application_ref_no,
 
                             'application_no' =>
-                                $paidInvoice['application_no']
+                            $paidInvoice['application_no']
                                 ?? $application->application_ref_no,
 
                             'payment_type' =>
-                                $paidInvoice['payment_type']
+                            $paidInvoice['payment_type']
                                 ?? 'Fi Pemprosesan',
 
                             'amount' =>
-                                (float) (
-                                    $paidInvoice['amount']
-                                    ?? 150
-                                ),
+                            (float) (
+                                $paidInvoice['amount']
+                                ?? 150
+                            ),
 
                             'amount_display' =>
-                                $paidInvoice['amount_display']
+                            $paidInvoice['amount_display']
                                 ?? 'RM 150.00',
 
                             'paid_date' =>
-                                optional(
-                                    $application->updated_at
-                                )->format('d/m/Y') ?? '-',
+                            optional(
+                                $application->updated_at
+                            )->format('d/m/Y') ?? '-',
 
                             'paid_at' =>
-                                optional(
-                                    $application->updated_at
-                                )->toDateTimeString(),
+                            optional(
+                                $application->updated_at
+                            )->toDateTimeString(),
 
                             'activity_name' =>
-                                $paidInvoice['activity_name']
+                            $paidInvoice['activity_name']
                                 ?? $application->activity_name
                                 ?? '-',
 
                             'activity_details' =>
-                                $paidInvoice['activity_details']
+                            $paidInvoice['activity_details']
                                 ?? $application->activity_details
                                 ?? '-',
                         ];
@@ -575,7 +574,7 @@ class WaterApplicationController extends Controller
             }
 
             $selectedActivities = collect($selectedActivities)
-                ->map(fn ($item) => trim((string) $item))
+                ->map(fn($item) => trim((string) $item))
                 ->filter()
                 ->unique()
                 ->values()
@@ -728,7 +727,7 @@ class WaterApplicationController extends Controller
             }
 
             $selectedActivities = collect($selectedActivities)
-                ->map(fn ($item) => trim((string) $item))
+                ->map(fn($item) => trim((string) $item))
                 ->filter()
                 ->unique()
                 ->values()
@@ -742,23 +741,23 @@ class WaterApplicationController extends Controller
 
             $splitBatchId = $draftData['split_batch_id']
                 ?? 'WATER-BATCH-'
-                    . $application->application_id
-                    . '-'
-                    . now()->format('YmdHis');
+                . $application->application_id
+                . '-'
+                . now()->format('YmdHis');
 
             $invoices = LsankInvoice::where(
-                    'application_id',
-                    $application->application_id
-                )
+                'application_id',
+                $application->application_id
+            )
                 ->where('status', 'unpaid')
                 ->orderBy('invoice_id')
                 ->get();
 
             if ($invoices->count() < count($selectedActivities)) {
                 LsankInvoice::where(
-                        'application_id',
-                        $application->application_id
-                    )
+                    'application_id',
+                    $application->application_id
+                )
                     ->where('status', 'unpaid')
                     ->delete();
 
@@ -770,22 +769,22 @@ class WaterApplicationController extends Controller
                 foreach ($selectedActivities as $index => $activity) {
                     $invoice = LsankInvoice::create([
                         'application_id' =>
-                            $application->application_id,
+                        $application->application_id,
 
                         'user_id' =>
-                            $application->user_id,
+                        $application->user_id,
 
                         'invoice_no' =>
-                            $this->generateInvoiceNoByRunningNumber(
-                                $startInvoiceRunningNumber + $index,
-                                '01'
-                            ),
+                        $this->generateInvoiceNoByRunningNumber(
+                            $startInvoiceRunningNumber + $index,
+                            '01'
+                        ),
 
                         'invoice_date' =>
-                            now()->toDateString(),
+                        now()->toDateString(),
 
                         'due_date' =>
-                            now()->addDays(14)->toDateString(),
+                        now()->addDays(14)->toDateString(),
 
                         'total_amount' => 150,
 
@@ -878,8 +877,8 @@ class WaterApplicationController extends Controller
 
                 $splitApplication->remarks = trim(
                     ($splitApplication->remarks ?? '')
-                    . "\nBayaran simulasi berjaya pada "
-                    . now()->format('d/m/Y H:i')
+                        . "\nBayaran simulasi berjaya pada "
+                        . now()->format('d/m/Y H:i')
                 );
 
                 $splitApplication->save();
@@ -896,22 +895,22 @@ class WaterApplicationController extends Controller
                 if (!$invoice) {
                     $invoice = LsankInvoice::create([
                         'application_id' =>
-                            $splitApplication->application_id,
+                        $splitApplication->application_id,
 
                         'user_id' =>
-                            $splitApplication->user_id,
+                        $splitApplication->user_id,
 
                         'invoice_no' =>
-                            $this->generateInvoiceNoByRunningNumber(
-                                $this->nextInvoiceRunningNumber(),
-                                '01'
-                            ),
+                        $this->generateInvoiceNoByRunningNumber(
+                            $this->nextInvoiceRunningNumber(),
+                            '01'
+                        ),
 
                         'invoice_date' =>
-                            now()->toDateString(),
+                        now()->toDateString(),
 
                         'due_date' =>
-                            now()->addDays(14)->toDateString(),
+                        now()->addDays(14)->toDateString(),
 
                         'total_amount' => 150,
 
@@ -968,91 +967,91 @@ class WaterApplicationController extends Controller
 
                 'data' => [
                     'id' =>
-                        $firstApplication->application_id,
+                    $firstApplication->application_id,
 
                     'application_id' =>
-                        $firstApplication->application_id,
+                    $firstApplication->application_id,
 
                     'application_ids' =>
-                        collect($paidApplications)
-                            ->pluck('application_id')
-                            ->values()
-                            ->all(),
+                    collect($paidApplications)
+                        ->pluck('application_id')
+                        ->values()
+                        ->all(),
 
                     'application_no' =>
-                        $firstApplication->application_ref_no,
+                    $firstApplication->application_ref_no,
 
                     'application_ref_no' =>
-                        $firstApplication->application_ref_no,
+                    $firstApplication->application_ref_no,
 
                     'application_nos' =>
-                        collect($paidApplications)
-                            ->pluck('application_ref_no')
-                            ->values()
-                            ->all(),
+                    collect($paidApplications)
+                        ->pluck('application_ref_no')
+                        ->values()
+                        ->all(),
 
                     'application_ref_nos' =>
-                        collect($paidApplications)
-                            ->pluck('application_ref_no')
-                            ->values()
-                            ->all(),
+                    collect($paidApplications)
+                        ->pluck('application_ref_no')
+                        ->values()
+                        ->all(),
 
                     'activity_names' =>
-                        collect($paidApplications)
-                            ->pluck('activity_name')
-                            ->values()
-                            ->all(),
+                    collect($paidApplications)
+                        ->pluck('activity_name')
+                        ->values()
+                        ->all(),
 
                     'invoice_id' =>
-                        $firstInvoice->invoice_id,
+                    $firstInvoice->invoice_id,
 
                     'invoice_ids' =>
-                        collect($paidInvoices)
-                            ->pluck('invoice_id')
-                            ->values()
-                            ->all(),
+                    collect($paidInvoices)
+                        ->pluck('invoice_id')
+                        ->values()
+                        ->all(),
 
                     'invoice_no' =>
-                        $firstInvoice->invoice_no,
+                    $firstInvoice->invoice_no,
 
                     'invoice_nos' =>
-                        collect($paidInvoices)
-                            ->pluck('invoice_no')
-                            ->values()
-                            ->all(),
+                    collect($paidInvoices)
+                        ->pluck('invoice_no')
+                        ->values()
+                        ->all(),
 
                     'receipt_id' =>
-                        $firstApplication->application_id,
+                    $firstApplication->application_id,
 
                     'receipt_ids' =>
-                        collect($paidApplications)
-                            ->pluck('application_id')
-                            ->values()
-                            ->all(),
+                    collect($paidApplications)
+                        ->pluck('application_id')
+                        ->values()
+                        ->all(),
 
                     'receipt_no' =>
-                        $receiptNos[0] ?? null,
+                    $receiptNos[0] ?? null,
 
                     'receipt_nos' =>
-                        $receiptNos,
+                    $receiptNos,
 
                     'split_batch_id' =>
-                        $splitBatchId,
+                    $splitBatchId,
 
                     'status' =>
-                        LsankApplication::STATUS_DALAM_PROSES,
+                    LsankApplication::STATUS_DALAM_PROSES,
 
                     'status_display' =>
-                        'Dalam Proses',
+                    'Dalam Proses',
 
                     'payment_status' =>
-                        LsankApplication::PAYMENT_SUDAH_BAYAR,
+                    LsankApplication::PAYMENT_SUDAH_BAYAR,
 
                     'payment_status_display' =>
-                        'Sudah Bayar',
+                    'Sudah Bayar',
 
                     'paid_at' =>
-                        now()->toDateTimeString(),
+                    now()->toDateTimeString(),
                 ],
             ]);
         });
@@ -1135,9 +1134,9 @@ class WaterApplicationController extends Controller
                     'business_phone' => $validated['business_phone'] ?? null,
                     'business_email' => $validated['business_email'] ?? null,
                     'responsible_officer_name' =>
-                        $validated['responsible_officer_name'] ?? null,
+                    $validated['responsible_officer_name'] ?? null,
                     'responsible_officer_phone' =>
-                        $validated['responsible_officer_phone'] ?? null,
+                    $validated['responsible_officer_phone'] ?? null,
                 ]);
             }
 
@@ -1177,11 +1176,11 @@ class WaterApplicationController extends Controller
                 'business_email' => $validated['business_email'] ?? null,
 
                 'responsible_officer_name' =>
-                    $validated['responsible_officer_name'] ?? null,
+                $validated['responsible_officer_name'] ?? null,
                 'responsible_officer_phone' =>
-                    $validated['responsible_officer_phone'] ?? null,
+                $validated['responsible_officer_phone'] ?? null,
                 'responsible_officer_position' =>
-                    $validated['responsible_officer_position'] ?? null,
+                $validated['responsible_officer_position'] ?? null,
                 'officers' => $validated['officers'] ?? [],
 
                 'activity_type_id' => $validated['activity_type_id'] ?? null,
@@ -1459,7 +1458,7 @@ class WaterApplicationController extends Controller
         }
 
         $selectedActivities = collect($selectedActivities)
-            ->map(fn ($item) => trim((string) $item))
+            ->map(fn($item) => trim((string) $item))
             ->filter()
             ->unique()
             ->values()
@@ -1568,7 +1567,7 @@ class WaterApplicationController extends Controller
         }
 
         return collect(preg_split('/[,;\/]/', $value))
-            ->map(fn ($item) => trim((string) $item))
+            ->map(fn($item) => trim((string) $item))
             ->filter()
             ->values()
             ->all();
@@ -2078,5 +2077,4 @@ class WaterApplicationController extends Controller
 
         return $refNo;
     }
-
 }

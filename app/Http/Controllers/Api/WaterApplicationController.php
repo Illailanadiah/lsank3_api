@@ -128,21 +128,93 @@ class WaterApplicationController extends Controller
                 $receiptItems = [];
 
                 if (
-                    in_array($application->application_status, [
-                        LsankApplication::STATUS_DALAM_PROSES,
-                        LsankApplication::STATUS_LULUS,
-                        LsankApplication::STATUS_GAGAL,
-                    ], true) ||
-                    $application->payment_status === LsankApplication::PAYMENT_SUDAH_BAYAR
+                    in_array(
+                        $application->application_status,
+                        [
+                            LsankApplication::STATUS_DALAM_PROSES,
+                            LsankApplication::STATUS_LULUS,
+                            LsankApplication::STATUS_GAGAL,
+                        ],
+                        true
+                    ) ||
+                    $application->payment_status ===
+                        LsankApplication::PAYMENT_SUDAH_BAYAR
                 ) {
-                    $receiptItems[] = [
-                        'receipt_id' => $application->application_id,
-                        'receipt_no' => 'RESIT-' . $year . '-' . $runningNo . '-01',
-                        'payment_type' => 'Fi Pemprosesan',
-                        'amount' => 150,
-                        'amount_display' => 'RM 150.00',
-                        'paid_date' => optional($application->updated_at)->format('d/m/Y') ?? '-',
-                    ];
+                    $paidInvoice = collect($invoiceItems)
+                        ->first(function ($item) use ($application) {
+                            return
+                                ($item['paid'] ?? false) === true &&
+                                (int) ($item['application_id'] ?? 0) ===
+                                    (int) $application->application_id;
+                        });
+
+                    if ($paidInvoice) {
+                        $receiptItems[] = [
+                            /*
+                            * Ini masih temporary receipt ID.
+                            * Jika water sudah simpan lsank_receipts,
+                            * gunakan receipt_id sebenar.
+                            */
+                            'receipt_id' =>
+                                $application->application_id,
+
+                            'application_id' =>
+                                $application->application_id,
+
+                            'receipt_no' =>
+                                'RESIT-' .
+                                $year . '-' .
+                                $runningNo . '-01',
+
+                            'invoice_id' =>
+                                $paidInvoice['invoice_id'],
+
+                            'invoice_no' =>
+                                $paidInvoice['invoice_no'],
+
+                            'application_ref_no' =>
+                                $paidInvoice['application_ref_no']
+                                ?? $application->application_ref_no,
+
+                            'application_no' =>
+                                $paidInvoice['application_no']
+                                ?? $application->application_ref_no,
+
+                            'payment_type' =>
+                                $paidInvoice['payment_type']
+                                ?? 'Fi Pemprosesan',
+
+                            'amount' =>
+                                (float) (
+                                    $paidInvoice['amount']
+                                    ?? 150
+                                ),
+
+                            'amount_display' =>
+                                $paidInvoice['amount_display']
+                                ?? 'RM 150.00',
+
+                            'paid_date' =>
+                                optional(
+                                    $application->updated_at
+                                )->format('d/m/Y') ?? '-',
+
+                            'paid_at' =>
+                                optional(
+                                    $application->updated_at
+                                )->toDateTimeString(),
+
+                            'activity_name' =>
+                                $paidInvoice['activity_name']
+                                ?? $application->activity_name
+                                ?? '-',
+
+                            'activity_details' =>
+                                $paidInvoice['activity_details']
+                                ?? $application->activity_details
+                                ?? '-',
+                        ];
+                    }
                 }
 
                 return [

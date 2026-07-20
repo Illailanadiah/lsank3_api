@@ -60,7 +60,7 @@ class LicenseController extends Controller
         }
 
         $licenses = $query->get()->map(
-            fn (LsankLicense $license) => $this->formatLicense($license)
+            fn(LsankLicense $license) => $this->formatLicense($license)
         );
 
         return response()->json([
@@ -141,14 +141,22 @@ class LicenseController extends Controller
 
             $licenseStartDate = data_get(
                 $reviewData,
-                'license_start_date',
-                now()->toDateString()
+                'license.license_start_date',
+                data_get(
+                    $reviewData,
+                    'license_start_date',
+                    now()->toDateString()
+                )
             );
 
             $licenseEndDate = data_get(
                 $reviewData,
-                'license_end_date',
-                now()->addYear()->subDay()->toDateString()
+                'license.license_end_date',
+                data_get(
+                    $reviewData,
+                    'license_end_date',
+                    now()->addYear()->subDay()->toDateString()
+                )
             );
 
             $licenseNo = $this->nextLicenseNumber($application);
@@ -225,7 +233,7 @@ class LicenseController extends Controller
             return response()->json([
                 'success' => false,
                 'message' =>
-                    'Fail lesen hanya boleh dimuat turun sekali.',
+                'Fail lesen hanya boleh dimuat turun sekali.',
             ], 409);
         }
 
@@ -247,8 +255,14 @@ class LicenseController extends Controller
             'pdf_downloaded_at' => now(),
         ])->save();
 
-        return Storage::disk('local')->download(
-            $license->license_pdf_path,
+        $pdfContent = Storage::disk('local')->get(
+            $license->license_pdf_path
+        );
+
+        return response()->streamDownload(
+            static function () use ($pdfContent): void {
+                echo $pdfContent;
+            },
             "{$license->license_no}.pdf",
             [
                 'Content-Type' => 'application/pdf',
@@ -270,7 +284,7 @@ class LicenseController extends Controller
             return response()->json([
                 'success' => false,
                 'message' =>
-                    'Lesen hanya boleh dibuka untuk cetakan sekali.',
+                'Lesen hanya boleh dibuka untuk cetakan sekali.',
             ], 409);
         }
 
@@ -300,7 +314,7 @@ class LicenseController extends Controller
             [
                 'Content-Type' => 'application/pdf',
                 'Content-Disposition' =>
-                    'inline; filename="'
+                'inline; filename="'
                     . $license->license_no
                     . '.pdf"',
             ]
@@ -310,45 +324,51 @@ class LicenseController extends Controller
     /**
      * Download QR PNG once.
      */
-  public function downloadQr(
-    Request $request,
-    LsankLicense $license
-) {
-    if ($license->qr_downloaded_at !== null) {
-        return response()->json([
-            'success' => false,
-            'message' =>
-                'Kod QR hanya boleh dimuat turun sekali.',
-        ], 409);
-    }
-
-    $this->ensureArtifacts($license);
-
-    if (
-        empty($license->qr_code_path) ||
-        !Storage::disk('local')->exists(
-            $license->qr_code_path
-        )
+    public function downloadQr(
+        Request $request,
+        LsankLicense $license
     ) {
-        return response()->json([
-            'success' => false,
-            'message' =>
+        if ($license->qr_downloaded_at !== null) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Kod QR hanya boleh dimuat turun sekali.',
+            ], 409);
+        }
+
+        $this->ensureArtifacts($license);
+
+        if (
+            empty($license->qr_code_path) ||
+            !Storage::disk('local')->exists(
+                $license->qr_code_path
+            )
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' =>
                 'Fail SVG kod QR tidak dijumpai.',
-        ], 404);
+            ], 404);
+        }
+
+        $license->forceFill([
+            'qr_downloaded_at' => now(),
+        ])->save();
+
+        $qrContent = Storage::disk('local')->get(
+            $license->qr_code_path
+        );
+
+        return response()->streamDownload(
+            static function () use ($qrContent): void {
+                echo $qrContent;
+            },
+            "{$license->license_no}-QR.svg",
+            [
+                'Content-Type' => 'image/svg+xml',
+            ]
+        );
     }
-
-    $license->forceFill([
-        'qr_downloaded_at' => now(),
-    ])->save();
-
-    return Storage::disk('local')->download(
-        $license->qr_code_path,
-        "{$license->license_no}-QR.svg",
-        [
-            'Content-Type' => 'image/svg+xml',
-        ]
-    );
-}
 
     /**
      * Public QR verification endpoint.
@@ -434,85 +454,85 @@ class LicenseController extends Controller
     }
 
     private function buildArtifacts(
-    LsankLicense $license
-): void {
-    $license->loadMissing([
-        'application',
-        'status',
-    ]);
+        LsankLicense $license
+    ): void {
+        $license->loadMissing([
+            'application',
+            'status',
+        ]);
 
-    $verificationUrl = url(
-        "/api/licenses/verify/{$license->qr_token}"
-    );
+        $verificationUrl = url(
+            "/api/licenses/verify/{$license->qr_token}"
+        );
 
-    $safeLicenseNo = str_replace(
-        ['/', '\\', ' '],
-        '-',
-        $license->license_no
-    );
+        $safeLicenseNo = str_replace(
+            ['/', '\\', ' '],
+            '-',
+            $license->license_no
+        );
 
-    $qrRelativePath =
-        "licenses/qr/{$safeLicenseNo}.svg";
+        $qrRelativePath =
+            "licenses/qr/{$safeLicenseNo}.svg";
 
-    $pdfRelativePath =
-        "licenses/pdf/{$safeLicenseNo}.pdf";
+        $pdfRelativePath =
+            "licenses/pdf/{$safeLicenseNo}.pdf";
 
-    Storage::disk('local')->makeDirectory(
-        'licenses/qr'
-    );
+        Storage::disk('local')->makeDirectory(
+            'licenses/qr'
+        );
 
-    Storage::disk('local')->makeDirectory(
-        'licenses/pdf'
-    );
+        Storage::disk('local')->makeDirectory(
+            'licenses/pdf'
+        );
 
-    $qrSvg = QrCode::format('svg')
-        ->size(420)
-        ->margin(1)
-        ->errorCorrection('H')
-        ->generate($verificationUrl);
+        $qrSvg = QrCode::format('svg')
+            ->size(420)
+            ->margin(1)
+            ->errorCorrection('H')
+            ->generate($verificationUrl);
 
-    Storage::disk('local')->put(
-        $qrRelativePath,
-        $qrSvg
-    );
+        Storage::disk('local')->put(
+            $qrRelativePath,
+            $qrSvg
+        );
 
-    $qrDataUri =
-        'data:image/svg+xml;base64,'
-        . base64_encode($qrSvg);
+        $qrDataUri =
+            'data:image/svg+xml;base64,'
+            . base64_encode($qrSvg);
 
-    $pdf = Pdf::loadView(
-        'licenses.certificate',
-        [
-            'license' => $license,
-            'application' => $license->application,
-            'qrDataUri' => $qrDataUri,
-            'verificationUrl' => $verificationUrl,
-        ]
-    )->setPaper('a4', 'portrait');
+        $pdf = Pdf::loadView(
+            'licenses.certificate',
+            [
+                'license' => $license,
+                'application' => $license->application,
+                'qrDataUri' => $qrDataUri,
+                'verificationUrl' => $verificationUrl,
+            ]
+        )->setPaper('a4', 'portrait');
 
-    Storage::disk('local')->put(
-        $pdfRelativePath,
-        $pdf->output()
-    );
+        Storage::disk('local')->put(
+            $pdfRelativePath,
+            $pdf->output()
+        );
 
-    $license->forceFill([
-        'qr_code_path' => $qrRelativePath,
-        'license_pdf_path' => $pdfRelativePath,
-    ])->save();
-}
+        $license->forceFill([
+            'qr_code_path' => $qrRelativePath,
+            'license_pdf_path' => $pdfRelativePath,
+        ])->save();
+    }
     private function nextLicenseNumber(
         LsankApplication $application
     ): string {
         $year = now()->format('Y');
 
         $typeName = strtolower(
-    trim((string) (
-        $application->license_type
-        ?? $application->activity_type
-        ?? $application->application_type
-        ?? ''
-    ))
-);
+            trim((string) (
+                $application->license_type
+                ?? $application->activity_type
+                ?? $application->application_type
+                ?? ''
+            ))
+        );
         $prefix = str_contains($typeName, 'efluen')
             ? 'EF'
             : 'WB';
@@ -577,18 +597,18 @@ class LicenseController extends Controller
         ));
     }
 
-   private function resolveLicenseType(
-    LsankApplication $application
-): string {
-    return trim((string) (
-        $application->license_type
-        ?? (
-            $application->application_type === 'effluent'
+    private function resolveLicenseType(
+        LsankApplication $application
+    ): string {
+        return trim((string) (
+            $application->license_type
+            ?? (
+                $application->application_type === 'effluent'
                 ? 'Aktiviti Pelepasan Efluen'
                 : 'Aktiviti Badan Perairan'
-        )
-    ));
-}
+            )
+        ));
+    }
 
     private function resolveActivityName(
         LsankApplication $application
@@ -665,13 +685,13 @@ class LicenseController extends Controller
             )?->toIso8601String(),
 
             'can_download_pdf' =>
-                $license->pdf_downloaded_at === null,
+            $license->pdf_downloaded_at === null,
 
             'can_print' =>
-                $license->printed_at === null,
+            $license->printed_at === null,
 
             'can_download_qr' =>
-                $license->qr_downloaded_at === null,
+            $license->qr_downloaded_at === null,
 
             'pdf_downloaded_at' => optional(
                 $license->pdf_downloaded_at

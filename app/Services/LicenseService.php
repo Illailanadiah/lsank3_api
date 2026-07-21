@@ -95,15 +95,45 @@ class LicenseService
 
             $startDate = $this->parseDate($startDateValue);
 
-            $expiryDateValue =
-                $licenseData['license_end_date']
-                ?? $reviewData['license_end_date']
-                ?? Carbon::parse($startDate)
-                ->addYear()
+            $draftData = is_array($application->draft_data)
+                ? $application->draft_data
+                : [];
+
+            $draftMeta = is_array($draftData['meta'] ?? null)
+                ? $draftData['meta']
+                : [];
+
+            /*
+ * Tempoh lesen dipilih oleh pengguna dalam borang:
+ * 1 hingga 5 tahun.
+ */
+            $licenseDurationYear = (int) (
+                $draftData['license_duration_year']
+                ?? $draftMeta['license_duration_year']
+                ?? 1
+            );
+
+            /*
+ * Pastikan tempoh tidak kurang daripada 1 tahun
+ * dan tidak melebihi 5 tahun.
+ */
+            $licenseDurationYear = max(
+                1,
+                min($licenseDurationYear, 5)
+            );
+
+            /*
+ * Lesen tamat sehari sebelum ulang tahun berikutnya.
+ *
+ * Contoh:
+ * mula 21/07/2026
+ * tempoh 1 tahun
+ * tamat 20/07/2027
+ */
+            $expiryDate = Carbon::parse($startDate)
+                ->addYears($licenseDurationYear)
                 ->subDay()
                 ->toDateString();
-
-            $expiryDate = $this->parseDate($expiryDateValue);
 
             $licenseNo = $this->generateLicenseNo(
                 $application

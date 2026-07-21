@@ -7,6 +7,7 @@ use App\Models\LsankApplication;
 use App\Models\LsankInvoice;
 use App\Models\LsankReceipt;
 use Illuminate\Http\Request;
+use App\Services\LicenseService;
 
 class ApplicationController extends Controller
 {
@@ -67,8 +68,8 @@ class ApplicationController extends Controller
             ->orderByDesc('application_id')
             ->get()
             ->map(
-                fn (LsankApplication $application) =>
-                    $this->formatApplication($application)
+                fn(LsankApplication $application) =>
+                $this->formatApplication($application)
             )
             ->values();
 
@@ -106,8 +107,8 @@ class ApplicationController extends Controller
             ->orderByDesc('application_id')
             ->get()
             ->map(
-                fn (LsankApplication $application) =>
-                    $this->formatApplication($application)
+                fn(LsankApplication $application) =>
+                $this->formatApplication($application)
             )
             ->values();
 
@@ -135,8 +136,8 @@ class ApplicationController extends Controller
             ->orderByDesc('application_id')
             ->get()
             ->map(
-                fn (LsankApplication $application) =>
-                    $this->formatApplication($application)
+                fn(LsankApplication $application) =>
+                $this->formatApplication($application)
             )
             ->values();
 
@@ -164,8 +165,8 @@ class ApplicationController extends Controller
             ->orderByDesc('application_id')
             ->get()
             ->map(
-                fn (LsankApplication $application) =>
-                    $this->formatApplication($application)
+                fn(LsankApplication $application) =>
+                $this->formatApplication($application)
             )
             ->values();
 
@@ -325,8 +326,11 @@ class ApplicationController extends Controller
         ]);
     }
 
-    public function review(Request $request, $id)
-    {
+    public function review(
+        Request $request,
+        $id,
+        LicenseService $licenseService
+    ) {
         $request->validate([
             'application_status' => 'nullable|string|in:lulus,gagal,dalam_proses',
             'payment_status' => 'nullable|string|max:100',
@@ -527,7 +531,9 @@ class ApplicationController extends Controller
         ]);
 
         $fresh = $application->fresh();
+
         $finalInvoices = [];
+        $license = null;
 
         $isDirectorApproval =
             $fresh->isDirectorApproved()
@@ -541,18 +547,64 @@ class ApplicationController extends Controller
                 );
 
             $fresh = $fresh->fresh();
+
+            $latestReviewData = is_array($fresh->review_data)
+                ? $fresh->review_data
+                : [];
+
+            $finalInvoiceStatus = strtolower(
+                trim(
+                    (string) (
+                        $latestReviewData['final_invoice_status']
+                        ?? ''
+                    )
+                )
+            );
+
+            /*
+     * Semua aktiviti kerajaan dikecualikan daripada
+     * Fi Lesen, Fi Caj dan Wang Sekuriti.
+     * Oleh itu lesen boleh dijana terus selepas kelulusan.
+     */
+            if ($finalInvoiceStatus === 'exempt') {
+                $license =
+                    $licenseService->generateForApprovedApplication(
+                        $fresh
+                    );
+
+                $latestReviewData['license_generation_status'] =
+                    'generated';
+
+                $latestReviewData['license_id'] =
+                    $license->license_id;
+
+                $latestReviewData['license_no'] =
+                    $license->license_no;
+
+                $latestReviewData['license_generated_at'] =
+                    now()->toDateTimeString();
+
+                $fresh->review_data = $latestReviewData;
+                $fresh->save();
+
+                $fresh = $fresh->fresh();
+            }
         }
 
         return response()->json([
             'success' => true,
 
-            'message' => $isDirectorApproval
-                ? (
-                    count($finalInvoices) > 0
-                    ? 'Permohonan diluluskan dan invois bayaran akhir berjaya dijana.'
-                    : 'Permohonan diluluskan. Tiada invois bayaran akhir perlu dijana.'
-                )
-                : 'Semakan permohonan berjaya disimpan.',
+            'message' => $license
+                ? 'Permohonan kerajaan diluluskan dan lesen berjaya dijana.'
+                : (
+                    $isDirectorApproval
+                    ? (
+                        count($finalInvoices) > 0
+                        ? 'Permohonan diluluskan dan invois bayaran akhir berjaya dijana.'
+                        : 'Permohonan diluluskan. Tiada invois bayaran akhir perlu dijana.'
+                    )
+                    : 'Semakan permohonan berjaya disimpan.'
+                ),
 
             'application' =>
             $this->formatApplication($fresh),
@@ -581,6 +633,35 @@ class ApplicationController extends Controller
                 })
                 ->values()
                 ->all(),
+            'license' => $license
+                ? [
+                    'license_id' =>
+                    $license->license_id,
+
+                    'license_no' =>
+                    $license->license_no,
+
+                    'application_id' =>
+                    $license->application_id,
+
+                    'holder_name' =>
+                    $license->holder_name,
+
+                    'license_type' =>
+                    $license->license_type,
+
+                    'start_date' =>
+                    optional($license->start_date)
+                        ->format('Y-m-d'),
+
+                    'expiry_date' =>
+                    optional($license->expiry_date)
+                        ->format('Y-m-d'),
+
+                    'status' =>
+                    $license->display_status,
+                ]
+                : null,
         ]);
     }
 
@@ -683,8 +764,8 @@ class ApplicationController extends Controller
             ?? $meta['selected_activities']
             ?? [
                 $application->activity_name
-                ?? $application->activity_details
-                ?? '-',
+                    ?? $application->activity_details
+                    ?? '-',
             ];
 
         if (!is_array($processingInvoiceActivities)) {
@@ -897,13 +978,13 @@ class ApplicationController extends Controller
                                 'application' => $invoiceApplication
                                     ? [
                                         'application_id' =>
-                                            $invoiceApplication->application_id,
+                                        $invoiceApplication->application_id,
                                         'application_ref_no' =>
-                                            $invoiceApplication->application_ref_no,
+                                        $invoiceApplication->application_ref_no,
                                         'activity_name' =>
-                                            $invoiceApplication->activity_name,
+                                        $invoiceApplication->activity_name,
                                         'activity_details' =>
-                                            $invoiceApplication->activity_details,
+                                        $invoiceApplication->activity_details,
                                     ]
                                     : null,
                             ]
@@ -918,22 +999,22 @@ class ApplicationController extends Controller
                                     ?? 0
                                 ),
                                 'payment_status' =>
-                                    $payment->payment_status,
+                                $payment->payment_status,
                                 'payment_date' => optional(
                                     $payment->payment_date
                                 )->toDateTimeString(),
                                 'transaction_ref_no' =>
-                                    $payment->transaction_ref_no,
+                                $payment->transaction_ref_no,
                                 'invoice' => $invoice
                                     ? [
                                         'invoice_id' =>
-                                            $invoice->invoice_id,
+                                        $invoice->invoice_id,
                                         'invoice_no' =>
-                                            $invoice->invoice_no,
+                                        $invoice->invoice_no,
                                         'application_id' =>
-                                            $invoice->application_id,
+                                        $invoice->application_id,
                                         'application_ref_no' =>
-                                            $applicationRefNo,
+                                        $applicationRefNo,
                                     ]
                                     : null,
                             ]
@@ -953,7 +1034,7 @@ class ApplicationController extends Controller
             'application_ref_nos' => $applicationRefNos,
             'application_nos' => $applicationRefNos,
             'processing_invoice_activities' =>
-                $processingInvoiceActivities,
+            $processingInvoiceActivities,
             'user_id' => $application->user_id,
             'applicant_id' => $application->applicant_id,
 
@@ -1024,11 +1105,11 @@ class ApplicationController extends Controller
             )->toDateTimeString(),
             'submitted_date' => optional(
                 $application->submitted_at
-                ?? $application->created_at
+                    ?? $application->created_at
             )->format('d M Y') ?? '-',
             'sort_date' => optional(
                 $application->submitted_at
-                ?? $application->created_at
+                    ?? $application->created_at
             )->toIso8601String(),
             'created_at' => optional(
                 $application->created_at
@@ -1077,18 +1158,98 @@ class ApplicationController extends Controller
             ? $application->review_data
             : [];
 
-        $isExempt = filter_var(
-            $reviewData['invoice_exempt'] ?? false,
+        $draftData = is_array($application->draft_data)
+            ? $application->draft_data
+            : [];
+
+        $draftMeta = is_array($draftData['meta'] ?? null)
+            ? $draftData['meta']
+            : [];
+
+        /*
+ * Kenal pasti semua kategori aktiviti kerajaan.
+ */
+        $projectInvoiceMode = strtolower(
+            trim(
+                (string) (
+                    $reviewData['project_invoice_mode']
+                    ?? $reviewData['invoice_category']
+                    ?? ''
+                )
+            )
+        );
+
+        $isGovernmentActivity = in_array(
+            $projectInvoiceMode,
+            [
+                'projek_kerajaan_binaan',
+                'aktiviti_kerajaan_rekreasi',
+            ],
+            true
+        );
+
+        /*
+ * Semua aktiviti kerajaan dikecualikan daripada
+ * Fi Lesen, Fi Caj dan Wang Sekuriti.
+ */
+        $isExempt =
+            $isGovernmentActivity
+            || filter_var(
+                $reviewData['invoice_exempt'] ?? false,
+                FILTER_VALIDATE_BOOLEAN
+            );
+
+        /*
+ * Semak sama ada permohonan adalah one-off.
+ */
+        $isOneOff = filter_var(
+            $draftData['is_one_off']
+                ?? $draftMeta['is_one_off']
+                ?? false,
             FILTER_VALIDATE_BOOLEAN
         );
+
+        /*
+ * Tempoh lesen biasa, minimum 1 tahun dan maksimum 5 tahun.
+ */
+        $licenseDurationYear = (int) (
+            $draftData['license_duration_year']
+            ?? $draftMeta['license_duration_year']
+            ?? 1
+        );
+
+        $licenseDurationYear = max(
+            1,
+            min($licenseDurationYear, 5)
+        );
+
+        /*
+ * Fi Lesen:
+ * One-off = RM250 sekali sahaja.
+ * Biasa = RM500 bagi setiap tahun.
+ */
+        $licenseFee = $isOneOff
+            ? 250
+            : 500 * $licenseDurationYear;
 
         /*
      * Aktiviti yang dikecualikan tidak mempunyai
      * Fi Lesen, Fi Caj atau Wang Sekuriti.
      */
         if ($isExempt) {
+            $reviewData['invoice_exempt'] = true;
+
+            $reviewData['invoice_fee_lesen'] = 0;
+            $reviewData['invoice_fee_caj'] = 0;
+            $reviewData['invoice_fee_sekuriti'] = 0;
+
+            $reviewData['invoice_exempt_reason'] =
+                'Semua aktiviti kerajaan dikecualikan daripada '
+                . 'Fi Lesen, Fi Caj dan Wang Sekuriti.';
+
             $reviewData['final_invoice_status'] = 'exempt';
             $reviewData['final_invoice_ids'] = [];
+            $reviewData['final_invoice_nos'] = [];
 
             $application->review_data = $reviewData;
             $application->save();
@@ -1103,13 +1264,16 @@ class ApplicationController extends Controller
      * 03 = Fi Caj
      * 04 = Wang Sekuriti
      */
+
+        $reviewData['invoice_fee_lesen'] = $licenseFee;
+        $reviewData['license_duration_year'] = $licenseDurationYear;
+        $reviewData['is_one_off'] = $isOneOff;
+        
         $feeItems = [
             [
                 'payment_type' => 'Fi Lesen',
                 'fee_code' => '02',
-                'amount' => $this->moneyValue(
-                    $reviewData['invoice_fee_lesen'] ?? 0
-                ),
+                'amount' => $licenseFee,
             ],
             [
                 'payment_type' => 'Fi Caj',

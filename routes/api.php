@@ -116,6 +116,11 @@ Route::middleware('auth:sanctum')->group(function () {
             WaterApplicationController::class,
             'pay',
         ]);
+        
+        Route::post('/{application}/pay-final', [
+            WaterApplicationController::class,
+            'payFinal',
+        ]);
 
         Route::delete('/{application}/draft', [
             WaterApplicationController::class,

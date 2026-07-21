@@ -274,4 +274,35 @@ class AuthController extends Controller
             ],
         ]);
     }
+
+    public function activateUser(Request $request, string $userId)
+    {
+        $user = LsankUser::find($userId);
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Pengguna tidak dijumpai.',
+            ], 404);
+        }
+
+        if ($user->status === 'active') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Akaun pengguna ini sudah aktif.',
+            ], 422);
+        }
+
+        $user->status = 'active';
+        $user->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Akaun pengguna berjaya diaktifkan semula.',
+            'data' => [
+                'user_id' => $user->user_id,
+                'status' => $user->status,
+            ],
+        ]);
+    }
 }

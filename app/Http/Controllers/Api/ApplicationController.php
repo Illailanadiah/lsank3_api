@@ -359,19 +359,8 @@ class ApplicationController extends Controller
             'head_feedback_target' => 'nullable|string|max:100',
             'head_officer_name' => 'nullable|string|max:255',
             'head_officer_email' => 'nullable|email|max:255',
-            'technical_feedback' => 'nullable|string',
-            'technical_feedback_target' => 'nullable|string|max:100',
-            'technical_feedback_target_name' => 'nullable|string|max:255',
-            'technical_feedback_target_email' => 'nullable|email|max:255',
-            'technical_officer_name' => 'nullable|string|max:255',
-            'technical_officer_email' => 'nullable|email|max:255',
-            'user_resubmission_required' => 'nullable',
-            'resubmit_duration_days' => 'nullable',
-            'resubmit_due_date' => 'nullable|string|max:50',
-            'director_remark' => 'nullable|string',
-            'director_feedback' => 'nullable|string',
-            'director_decision' => 'nullable|string|max:100',
         ]);
+
 
         $application = LsankApplication::where('application_id', $id)->first();
 
@@ -429,6 +418,23 @@ class ApplicationController extends Controller
             'director_remark',
             'director_feedback',
             'director_decision',
+            'invoice_generate',
+            'invoice_trigger',
+            'invoice_category',
+            'invoice_fee_caj',
+            'invoice_fee_lesen',
+            'invoice_fee_sekuriti',
+            'invoice_exempt',
+            'invoice_exempt_reason',
+            'invoice_manual_mode',
+            'invoice_manual_reason',
+
+            'security_amount',
+            'government_project',
+            'project_invoice_mode',
+
+            'license_start_date',
+            'license_end_date',
         ];
 
         $workflowData = [];
@@ -520,13 +526,61 @@ class ApplicationController extends Controller
             'effluent',
         ]);
 
-        $formattedApplication = $this->formatApplication($fresh);
+        $fresh = $application->fresh();
+        $finalInvoices = [];
+
+        $isDirectorApproval =
+            $fresh->isDirectorApproved()
+            && $request->input('director_decision') === 'lulus'
+            && $request->input('workflow_stage') === 'director_approved';
+
+        if ($isDirectorApproval) {
+            $finalInvoices =
+                $this->createFinalInvoicesForApprovedApplication(
+                    $fresh
+                );
+
+            $fresh = $fresh->fresh();
+        }
 
         return response()->json([
             'success' => true,
-            'message' => 'Semakan permohonan berjaya disimpan.',
-            'application' => $formattedApplication,
-            'data' => $formattedApplication,
+
+            'message' => $isDirectorApproval
+                ? (
+                    count($finalInvoices) > 0
+                    ? 'Permohonan diluluskan dan invois bayaran akhir berjaya dijana.'
+                    : 'Permohonan diluluskan. Tiada invois bayaran akhir perlu dijana.'
+                )
+                : 'Semakan permohonan berjaya disimpan.',
+
+            'application' =>
+            $this->formatApplication($fresh),
+
+            'data' =>
+            $this->formatApplication($fresh),
+
+            'final_invoices' => collect($finalInvoices)
+                ->map(function (LsankInvoice $invoice) {
+                    return [
+                        'invoice_id' =>
+                        $invoice->invoice_id,
+
+                        'invoice_no' =>
+                        $invoice->invoice_no,
+
+                        'payment_type' =>
+                        $invoice->payment_type,
+
+                        'total_amount' =>
+                        (float) $invoice->total_amount,
+
+                        'status' =>
+                        $invoice->status,
+                    ];
+                })
+                ->values()
+                ->all(),
         ]);
     }
 
@@ -1009,5 +1063,278 @@ class ApplicationController extends Controller
         }
 
         return '-';
+    }
+    private function createFinalInvoicesForApprovedApplication(
+        LsankApplication $application
+    ): array {
+        $application->refresh();
+
+        if (!$application->isDirectorApproved()) {
+            return [];
+        }
+
+        $reviewData = is_array($application->review_data)
+            ? $application->review_data
+            : [];
+
+        $isExempt = filter_var(
+            $reviewData['invoice_exempt'] ?? false,
+            FILTER_VALIDATE_BOOLEAN
+        );
+
+        /*
+     * Aktiviti yang dikecualikan tidak mempunyai
+     * Fi Lesen, Fi Caj atau Wang Sekuriti.
+     */
+        if ($isExempt) {
+            $reviewData['final_invoice_status'] = 'exempt';
+            $reviewData['final_invoice_ids'] = [];
+
+            $application->review_data = $reviewData;
+            $application->save();
+
+            return [];
+        }
+
+        /*
+     * Kod jenis fi:
+     * 01 = Fi Pemprosesan
+     * 02 = Fi Lesen
+     * 03 = Fi Caj
+     * 04 = Wang Sekuriti
+     */
+        $feeItems = [
+            [
+                'payment_type' => 'Fi Lesen',
+                'fee_code' => '02',
+                'amount' => $this->moneyValue(
+                    $reviewData['invoice_fee_lesen'] ?? 0
+                ),
+            ],
+            [
+                'payment_type' => 'Fi Caj',
+                'fee_code' => '03',
+                'amount' => $this->moneyValue(
+                    $reviewData['invoice_fee_caj'] ?? 0
+                ),
+            ],
+            [
+                'payment_type' => 'Wang Sekuriti',
+                'fee_code' => '04',
+                'amount' => $this->moneyValue(
+                    $reviewData['invoice_fee_sekuriti']
+                        ?? $reviewData['security_amount']
+                        ?? 0
+                ),
+            ],
+        ];
+
+        /*
+     * Jangan jana invois yang jumlahnya RM0.
+     */
+        $feeItems = collect($feeItems)
+            ->filter(function (array $item) {
+                return $item['amount'] > 0;
+            })
+            ->values();
+
+        if ($feeItems->isEmpty()) {
+            $reviewData['final_invoice_status'] = 'no_fee';
+            $reviewData['final_invoice_ids'] = [];
+
+            $application->review_data = $reviewData;
+            $application->save();
+
+            return [];
+        }
+
+        $createdInvoices = [];
+
+        $nextRunningNumber = $this->nextInvoiceRunningNumber();
+
+        foreach ($feeItems as $index => $feeItem) {
+            /*
+         * Elakkan invois berganda jika Pengarah
+         * menekan butang Lulus lebih daripada sekali.
+         */
+            $invoice = LsankInvoice::where(
+                'application_id',
+                $application->application_id
+            )
+                ->where(
+                    'payment_type',
+                    $feeItem['payment_type']
+                )
+                ->first();
+
+            if (!$invoice) {
+                $invoice = LsankInvoice::create([
+                    'application_id' =>
+                    $application->application_id,
+
+                    'license_id' => null,
+
+                    'user_id' =>
+                    $application->user_id,
+
+                    'invoice_no' =>
+                    $this->generateInvoiceNoByRunningNumber(
+                        $nextRunningNumber + $index,
+                        $feeItem['fee_code']
+                    ),
+
+                    'payment_type' =>
+                    $feeItem['payment_type'],
+
+                    'invoice_date' =>
+                    now()->toDateString(),
+
+                    'due_date' =>
+                    now()->addDays(14)->toDateString(),
+
+                    'total_amount' =>
+                    $feeItem['amount'],
+
+                    'status' => 'unpaid',
+                ]);
+            } elseif ($invoice->status !== 'paid') {
+                /*
+             * Kalau invois belum dibayar dan jumlah fi berubah,
+             * kemas kini jumlah tanpa mencipta rekod baharu.
+             */
+                $invoice->total_amount =
+                    $feeItem['amount'];
+
+                $invoice->invoice_date =
+                    now()->toDateString();
+
+                $invoice->due_date =
+                    now()->addDays(14)->toDateString();
+
+                $invoice->status = 'unpaid';
+                $invoice->save();
+            }
+
+            $createdInvoices[] = $invoice;
+        }
+
+        $reviewData['final_invoice_status'] =
+            'pending_payment';
+
+        $reviewData['final_invoice_ids'] =
+            collect($createdInvoices)
+            ->pluck('invoice_id')
+            ->values()
+            ->all();
+
+        $reviewData['final_invoice_nos'] =
+            collect($createdInvoices)
+            ->pluck('invoice_no')
+            ->values()
+            ->all();
+
+        $application->payment_status =
+            LsankApplication::PAYMENT_MENUNGGU_BAYARAN;
+
+        $application->review_data = $reviewData;
+        $application->save();
+
+        return $createdInvoices;
+    }
+
+    private function moneyValue(mixed $value): float
+    {
+        if ($value === null) {
+            return 0;
+        }
+
+        $text = trim((string) $value);
+
+        if ($text === '') {
+            return 0;
+        }
+
+        /*
+     * Sokong nilai seperti:
+     * 1000
+     * 1,000.00
+     * RM 1,000.00
+     */
+        $cleaned = preg_replace(
+            '/[^0-9.\-]/',
+            '',
+            $text
+        );
+
+        if (
+            $cleaned === null ||
+            $cleaned === '' ||
+            !is_numeric($cleaned)
+        ) {
+            return 0;
+        }
+
+        return max(
+            0,
+            round((float) $cleaned, 2)
+        );
+    }
+
+    private function generateInvoiceNoByRunningNumber(
+        int $runningNumber,
+        string $feeTypeCode
+    ): string {
+        $year = now()->format('Y');
+
+        $runningNo = str_pad(
+            $runningNumber,
+            4,
+            '0',
+            STR_PAD_LEFT
+        );
+
+        return 'INVOIS-'
+            . $year
+            . '-'
+            . $runningNo
+            . '-'
+            . $feeTypeCode;
+    }
+
+    private function nextInvoiceRunningNumber(): int
+    {
+        $year = now()->format('Y');
+
+        $latestInvoice = LsankInvoice::where(
+            'invoice_no',
+            'like',
+            'INVOIS-' . $year . '-%'
+        )
+            ->orderByDesc('invoice_id')
+            ->first();
+
+        if (
+            !$latestInvoice ||
+            empty($latestInvoice->invoice_no)
+        ) {
+            return 1;
+        }
+
+        $parts = explode(
+            '-',
+            $latestInvoice->invoice_no
+        );
+
+        if (count($parts) < 3) {
+            return 1;
+        }
+
+        $latestRunningNo = (int) $parts[2];
+
+        if ($latestRunningNo < 1) {
+            return 1;
+        }
+
+        return $latestRunningNo + 1;
     }
 }

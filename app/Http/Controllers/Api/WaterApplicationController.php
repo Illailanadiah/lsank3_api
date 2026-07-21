@@ -31,13 +31,14 @@ class WaterApplicationController extends Controller
             'status',
             'type',
             'waterBody',
+            'license.status',
         ])
             ->where('user_id', $request->user()->user_id)
             ->where('application_type_id', $typeId)
             ->latest('application_id')
             ->get()
             ->map(function ($application) {
-                
+
                 $fees = $this->calculateWaterFees($application);
 
                 $draftData = is_array($application->draft_data)
@@ -127,196 +128,196 @@ class WaterApplicationController extends Controller
                     ->all();
 
                 $receiptItems = LsankReceipt::query()
-                ->with([
-                    'invoice.application',
-                    'payment',
-                ])
-                ->whereHas('invoice', function ($query) use ($application) {
-                    $query->where(
-                        'application_id',
-                        $application->application_id
-                    );
-                })
-                ->latest('receipt_id')
-                ->get()
-                ->map(function (LsankReceipt $receipt) use ($application) {
-                    $invoice = $receipt->invoice;
-                    $payment = $receipt->payment;
+                    ->with([
+                        'invoice.application',
+                        'payment',
+                    ])
+                    ->whereHas('invoice', function ($query) use ($application) {
+                        $query->where(
+                            'application_id',
+                            $application->application_id
+                        );
+                    })
+                    ->latest('receipt_id')
+                    ->get()
+                    ->map(function (LsankReceipt $receipt) use ($application) {
+                        $invoice = $receipt->invoice;
+                        $payment = $receipt->payment;
 
-                    $invoiceApplication = $invoice?->application;
+                        $invoiceApplication = $invoice?->application;
 
-                    $applicationId = $invoice?->application_id
-                        ?? $application->application_id;
+                        $applicationId = $invoice?->application_id
+                            ?? $application->application_id;
 
-                    $applicationRefNo =
-                        $invoiceApplication?->application_ref_no
-                        ?? $application->application_ref_no;
+                        $applicationRefNo =
+                            $invoiceApplication?->application_ref_no
+                            ?? $application->application_ref_no;
 
-                    $activityName =
-                        $invoiceApplication?->activity_name
-                        ?? $invoiceApplication?->activity_details
-                        ?? $application->activity_name
-                        ?? $application->activity_details
-                        ?? '-';
+                        $activityName =
+                            $invoiceApplication?->activity_name
+                            ?? $invoiceApplication?->activity_details
+                            ?? $application->activity_name
+                            ?? $application->activity_details
+                            ?? '-';
 
-                    $amount = (float) (
-                        $receipt->amount
-                        ?? $payment?->amount
-                        ?? $invoice?->total_amount
-                        ?? 0
-                    );
+                        $amount = (float) (
+                            $receipt->amount
+                            ?? $payment?->amount
+                            ?? $invoice?->total_amount
+                            ?? 0
+                        );
 
-                    $paidAt =
-                        $payment?->payment_date
-                        ?? $receipt->receipt_date
-                        ?? $receipt->created_at;
+                        $paidAt =
+                            $payment?->payment_date
+                            ?? $receipt->receipt_date
+                            ?? $receipt->created_at;
 
-                    $paymentStatus = strtolower(
-                        trim((string) ($payment?->payment_status ?? ''))
-                    );
+                        $paymentStatus = strtolower(
+                            trim((string) ($payment?->payment_status ?? ''))
+                        );
 
-                    return [
-                        'receipt_id' =>
+                        return [
+                            'receipt_id' =>
                             $receipt->receipt_id,
 
-                        'receipt_no' =>
+                            'receipt_no' =>
                             $receipt->receipt_no,
 
-                        'application_id' =>
+                            'application_id' =>
                             $applicationId,
 
-                        'application_ref_no' =>
+                            'application_ref_no' =>
                             $applicationRefNo,
 
-                        'application_no' =>
+                            'application_no' =>
                             $applicationRefNo,
 
-                        'file_no' =>
+                            'file_no' =>
                             $applicationRefNo,
 
-                        'invoice_id' =>
+                            'invoice_id' =>
                             $invoice?->invoice_id,
 
-                        'invoice_no' =>
+                            'invoice_no' =>
                             $invoice?->invoice_no ?? '-',
 
-                        'payment_id' =>
+                            'payment_id' =>
                             $payment?->payment_id,
 
-                        'payment_type' =>
+                            'payment_type' =>
                             $invoice?->payment_type
-                            ?? 'Fi Pemprosesan',
+                                ?? 'Fi Pemprosesan',
 
-                        'amount' =>
+                            'amount' =>
                             $amount,
 
-                        'paid_amount' =>
+                            'paid_amount' =>
                             $amount,
 
-                        'amount_display' =>
+                            'amount_display' =>
                             'RM ' . number_format($amount, 2),
 
-                        'paid_amount_display' =>
+                            'paid_amount_display' =>
                             'RM ' . number_format($amount, 2),
 
-                        'receipt_date' =>
+                            'receipt_date' =>
                             optional(
                                 $receipt->receipt_date
                             )->format('d/m/Y') ?? '-',
 
-                        'paid_date' =>
+                            'paid_date' =>
                             optional($paidAt)->format('d/m/Y') ?? '-',
 
-                        'paid_at' =>
+                            'paid_at' =>
                             optional($paidAt)->toDateTimeString(),
 
-                        'status' =>
+                            'status' =>
                             $receipt->status ?? 'valid',
 
-                        'paid' => in_array(
-                            $paymentStatus,
-                            [
-                                'successful',
-                                'success',
-                                'paid',
-                                'succeeded',
-                                'berjaya',
-                            ],
-                            true
-                        ),
+                            'paid' => in_array(
+                                $paymentStatus,
+                                [
+                                    'successful',
+                                    'success',
+                                    'paid',
+                                    'succeeded',
+                                    'berjaya',
+                                ],
+                                true
+                            ),
 
-                        'activity_name' =>
+                            'activity_name' =>
                             $activityName,
 
-                        'activity_details' =>
+                            'activity_details' =>
                             $activityName,
 
-                        'invoice' => $invoice
-                            ? [
-                                'invoice_id' =>
+                            'invoice' => $invoice
+                                ? [
+                                    'invoice_id' =>
                                     $invoice->invoice_id,
 
-                                'invoice_no' =>
+                                    'invoice_no' =>
                                     $invoice->invoice_no,
 
-                                'application_id' =>
+                                    'application_id' =>
                                     $invoice->application_id,
 
-                                'payment_type' =>
+                                    'payment_type' =>
                                     $invoice->payment_type
-                                    ?? 'Fi Pemprosesan',
+                                        ?? 'Fi Pemprosesan',
 
-                                'total_amount' =>
+                                    'total_amount' =>
                                     (float) $invoice->total_amount,
 
-                                'status' =>
+                                    'status' =>
                                     $invoice->status,
 
-                                'application' => $invoiceApplication
-                                    ? [
-                                        'application_id' =>
+                                    'application' => $invoiceApplication
+                                        ? [
+                                            'application_id' =>
                                             $invoiceApplication->application_id,
 
-                                        'application_ref_no' =>
+                                            'application_ref_no' =>
                                             $invoiceApplication->application_ref_no,
 
-                                        'activity_name' =>
+                                            'activity_name' =>
                                             $invoiceApplication->activity_name,
 
-                                        'activity_details' =>
+                                            'activity_details' =>
                                             $invoiceApplication->activity_details,
-                                    ]
-                                    : null,
-                            ]
-                            : null,
+                                        ]
+                                        : null,
+                                ]
+                                : null,
 
-                        'payment' => $payment
-                            ? [
-                                'payment_id' =>
+                            'payment' => $payment
+                                ? [
+                                    'payment_id' =>
                                     $payment->payment_id,
 
-                                'invoice_id' =>
+                                    'invoice_id' =>
                                     $payment->invoice_id,
 
-                                'amount' =>
+                                    'amount' =>
                                     (float) $payment->amount,
 
-                                'payment_status' =>
+                                    'payment_status' =>
                                     $payment->payment_status,
 
-                                'payment_date' =>
+                                    'payment_date' =>
                                     optional(
                                         $payment->payment_date
                                     )->toDateTimeString(),
 
-                                'transaction_ref_no' =>
+                                    'transaction_ref_no' =>
                                     $payment->transaction_ref_no,
-                            ]
-                            : null,
-                    ];
-                })
-                ->values()
-                ->all();
+                                ]
+                                : null,
+                        ];
+                    })
+                    ->values()
+                    ->all();
 
                 return [
                     'id' => $application->application_id,
@@ -395,6 +396,74 @@ class WaterApplicationController extends Controller
 
                     'updated_at' => optional($application->updated_at)
                         ->toDateTimeString(),
+
+                    'license' => $application->license
+                        ? [
+                            'license_id' =>
+                            $application->license->license_id,
+
+                            'license_no' =>
+                            $application->license->license_no,
+
+                            'file_no' =>
+                            $application->license->file_no
+                                ?? $application->application_ref_no,
+
+                            'application_id' =>
+                            $application->license->application_id,
+
+                            'holder_name' =>
+                            $application->license->holder_name,
+
+                            'license_type' =>
+                            $application->license->license_type,
+
+                            'activity_name' =>
+                            $application->license->activity_name
+                                ?? $application->activity_name
+                                ?? $application->activity_type
+                                ?? optional($application->waterBody)->activity_details
+                                ?? '-',
+
+                            'activity_location' =>
+                            $application->license->activity_location
+                                ?? $application->activity_location
+                                ?? optional($application->waterBody)->activity_location
+                                ?? '-',
+
+                            'start_date' =>
+                            optional($application->license->start_date)
+                                ->format('Y-m-d'),
+
+                            'start_date_display' =>
+                            optional($application->license->start_date)
+                                ->format('d/m/Y'),
+
+                            'expiry_date' =>
+                            optional($application->license->expiry_date)
+                                ->format('Y-m-d'),
+
+                            'expiry_date_display' =>
+                            optional($application->license->expiry_date)
+                                ->format('d/m/Y'),
+
+                            'status' =>
+                            $application->license->display_status,
+
+                            'license_status_id' =>
+                            $application->license->license_status_id,
+
+                            'qr_code_path' =>
+                            $application->license->qr_code_path,
+
+                            'license_pdf_path' =>
+                            $application->license->license_pdf_path,
+
+                            'generated_at' =>
+                            optional($application->license->generated_at)
+                                ->toDateTimeString(),
+                        ]
+                        : null,
 
                     'fees' => $fees,
                     'invoice_items' => $invoiceItems,
@@ -807,13 +876,13 @@ class WaterApplicationController extends Controller
 
         if (
             $application->payment_status ===
-                LsankApplication::PAYMENT_SUDAH_BAYAR ||
+            LsankApplication::PAYMENT_SUDAH_BAYAR ||
             $alreadyPaid
         ) {
             return response()->json([
                 'success' => false,
                 'message' =>
-                    'Bayaran bagi permohonan ini telah dibuat.',
+                'Bayaran bagi permohonan ini telah dibuat.',
             ], 422);
         }
 
@@ -824,7 +893,7 @@ class WaterApplicationController extends Controller
             return response()->json([
                 'success' => false,
                 'message' =>
-                    'Permohonan ini belum berada di peringkat fi pemprosesan.',
+                'Permohonan ini belum berada di peringkat fi pemprosesan.',
             ], 422);
         }
 
@@ -857,7 +926,7 @@ class WaterApplicationController extends Controller
             }
 
             $selectedActivities = collect($selectedActivities)
-                ->map(fn ($item) => trim((string) $item))
+                ->map(fn($item) => trim((string) $item))
                 ->filter()
                 ->unique()
                 ->values()
@@ -906,22 +975,22 @@ class WaterApplicationController extends Controller
                 foreach ($selectedActivities as $index => $activity) {
                     $invoice = LsankInvoice::create([
                         'application_id' =>
-                            $application->application_id,
+                        $application->application_id,
 
                         'user_id' =>
-                            $application->user_id,
+                        $application->user_id,
 
                         'invoice_no' =>
-                            $this->generateInvoiceNoByRunningNumber(
-                                $startInvoiceRunningNumber + $index,
-                                '01'
-                            ),
+                        $this->generateInvoiceNoByRunningNumber(
+                            $startInvoiceRunningNumber + $index,
+                            '01'
+                        ),
 
                         'invoice_date' =>
-                            now()->toDateString(),
+                        now()->toDateString(),
 
                         'due_date' =>
-                            now()->addDays(14)->toDateString(),
+                        now()->addDays(14)->toDateString(),
 
                         'total_amount' => 150,
 
@@ -1023,8 +1092,8 @@ class WaterApplicationController extends Controller
 
                 $splitApplication->remarks = trim(
                     ($splitApplication->remarks ?? '')
-                    . "\nBayaran simulasi berjaya pada "
-                    . now()->format('d/m/Y H:i')
+                        . "\nBayaran simulasi berjaya pada "
+                        . now()->format('d/m/Y H:i')
                 );
 
                 $splitApplication->save();
@@ -1047,22 +1116,22 @@ class WaterApplicationController extends Controller
                 if (!$invoice) {
                     $invoice = LsankInvoice::create([
                         'application_id' =>
-                            $splitApplication->application_id,
+                        $splitApplication->application_id,
 
                         'user_id' =>
-                            $splitApplication->user_id,
+                        $splitApplication->user_id,
 
                         'invoice_no' =>
-                            $this->generateInvoiceNoByRunningNumber(
-                                $this->nextInvoiceRunningNumber(),
-                                '01'
-                            ),
+                        $this->generateInvoiceNoByRunningNumber(
+                            $this->nextInvoiceRunningNumber(),
+                            '01'
+                        ),
 
                         'invoice_date' =>
-                            now()->toDateString(),
+                        now()->toDateString(),
 
                         'due_date' =>
-                            now()->addDays(14)->toDateString(),
+                        now()->addDays(14)->toDateString(),
 
                         'total_amount' => 150,
 
@@ -1094,14 +1163,14 @@ class WaterApplicationController extends Controller
                         'payment_method_id' => null,
 
                         'amount' =>
-                            (float) $invoice->total_amount,
+                        (float) $invoice->total_amount,
 
                         'payment_status' => 'successful',
 
                         'payment_date' => now(),
 
                         'transaction_ref_no' =>
-                            'TEST-WATER-'
+                        'TEST-WATER-'
                             . $splitApplication->application_id
                             . '-'
                             . $invoice->invoice_id
@@ -1143,13 +1212,13 @@ class WaterApplicationController extends Controller
                         'receipt_no' => $receiptNo,
 
                         'payment_id' =>
-                            $payment->payment_id,
+                        $payment->payment_id,
 
                         'receipt_date' =>
-                            now()->toDateString(),
+                        now()->toDateString(),
 
                         'amount' =>
-                            (float) $invoice->total_amount,
+                        (float) $invoice->total_amount,
 
                         'receipt_pdf_path' => null,
 
@@ -1193,94 +1262,94 @@ class WaterApplicationController extends Controller
 
                 'data' => [
                     'id' =>
-                        $firstApplication->application_id,
+                    $firstApplication->application_id,
 
                     'application_id' =>
-                        $firstApplication->application_id,
+                    $firstApplication->application_id,
 
                     'application_ids' =>
-                        collect($paidApplications)
-                            ->pluck('application_id')
-                            ->values()
-                            ->all(),
+                    collect($paidApplications)
+                        ->pluck('application_id')
+                        ->values()
+                        ->all(),
 
                     'application_no' =>
-                        $firstApplication->application_ref_no,
+                    $firstApplication->application_ref_no,
 
                     'application_ref_no' =>
-                        $firstApplication->application_ref_no,
+                    $firstApplication->application_ref_no,
 
                     'application_nos' =>
-                        collect($paidApplications)
-                            ->pluck('application_ref_no')
-                            ->values()
-                            ->all(),
+                    collect($paidApplications)
+                        ->pluck('application_ref_no')
+                        ->values()
+                        ->all(),
 
                     'application_ref_nos' =>
-                        collect($paidApplications)
-                            ->pluck('application_ref_no')
-                            ->values()
-                            ->all(),
+                    collect($paidApplications)
+                        ->pluck('application_ref_no')
+                        ->values()
+                        ->all(),
 
                     'activity_names' =>
-                        collect($paidApplications)
-                            ->pluck('activity_name')
-                            ->values()
-                            ->all(),
+                    collect($paidApplications)
+                        ->pluck('activity_name')
+                        ->values()
+                        ->all(),
 
                     'invoice_id' =>
-                        $firstInvoice->invoice_id,
+                    $firstInvoice->invoice_id,
 
                     'invoice_ids' =>
-                        collect($paidInvoices)
-                            ->pluck('invoice_id')
-                            ->values()
-                            ->all(),
+                    collect($paidInvoices)
+                        ->pluck('invoice_id')
+                        ->values()
+                        ->all(),
 
                     'invoice_no' =>
-                        $firstInvoice->invoice_no,
+                    $firstInvoice->invoice_no,
 
                     'invoice_nos' =>
-                        collect($paidInvoices)
-                            ->pluck('invoice_no')
-                            ->values()
-                            ->all(),
+                    collect($paidInvoices)
+                        ->pluck('invoice_no')
+                        ->values()
+                        ->all(),
 
                     'payment_id' =>
-                        $paymentIds[0] ?? null,
+                    $paymentIds[0] ?? null,
 
                     'payment_ids' =>
-                        $paymentIds,
+                    $paymentIds,
 
                     'receipt_id' =>
-                        $receiptIds[0] ?? null,
+                    $receiptIds[0] ?? null,
 
                     'receipt_ids' =>
-                        $receiptIds,
+                    $receiptIds,
 
                     'receipt_no' =>
-                        $receiptNos[0] ?? null,
+                    $receiptNos[0] ?? null,
 
                     'receipt_nos' =>
-                        $receiptNos,
+                    $receiptNos,
 
                     'split_batch_id' =>
-                        $splitBatchId,
+                    $splitBatchId,
 
                     'status' =>
-                        LsankApplication::STATUS_DALAM_PROSES,
+                    LsankApplication::STATUS_DALAM_PROSES,
 
                     'status_display' =>
-                        'Dalam Proses',
+                    'Dalam Proses',
 
                     'payment_status' =>
-                        LsankApplication::PAYMENT_SUDAH_BAYAR,
+                    LsankApplication::PAYMENT_SUDAH_BAYAR,
 
                     'payment_status_display' =>
-                        'Sudah Bayar',
+                    'Sudah Bayar',
 
                     'paid_at' =>
-                        now()->toDateTimeString(),
+                    now()->toDateTimeString(),
                 ],
             ]);
         });
@@ -1743,9 +1812,9 @@ class WaterApplicationController extends Controller
                 'activity_type' => $validated['activity_name'] ?? null,
                 'application_type' => 'water',
                 'payment_status' =>
-                    LsankApplication::PAYMENT_BELUM_BAYAR,
+                LsankApplication::PAYMENT_BELUM_BAYAR,
                 'application_status' =>
-                    LsankApplication::STATUS_DRAF,
+                LsankApplication::STATUS_DRAF,
 
                 'applicant_name' => $validated['applicant_name'],
                 'business_name' => $validated['company_name'] ?? null,
@@ -1973,111 +2042,111 @@ class WaterApplicationController extends Controller
 
                 return [
                     'receipt_id' =>
-                        $receipt->receipt_id,
+                    $receipt->receipt_id,
 
                     'receipt_no' =>
-                        $receipt->receipt_no,
+                    $receipt->receipt_no,
 
                     'application_id' =>
-                        $invoice?->application_id,
+                    $invoice?->application_id,
 
                     'application_ref_no' =>
-                        $invoiceApplication?->application_ref_no,
+                    $invoiceApplication?->application_ref_no,
 
                     'application_no' =>
-                        $invoiceApplication?->application_ref_no,
+                    $invoiceApplication?->application_ref_no,
 
                     'file_no' =>
-                        $invoiceApplication?->application_ref_no,
+                    $invoiceApplication?->application_ref_no,
 
                     'invoice_id' =>
-                        $invoice?->invoice_id,
+                    $invoice?->invoice_id,
 
                     'invoice_no' =>
-                        $invoice?->invoice_no ?? '-',
+                    $invoice?->invoice_no ?? '-',
 
                     'payment_id' =>
-                        $payment?->payment_id,
+                    $payment?->payment_id,
 
                     'payment_type' =>
-                        $invoice?->payment_type
+                    $invoice?->payment_type
                         ?? 'Fi Pemprosesan',
 
                     'amount' =>
-                        $amount,
+                    $amount,
 
                     'paid_amount' =>
-                        $amount,
+                    $amount,
 
                     'amount_display' =>
-                        'RM ' . number_format($amount, 2),
+                    'RM ' . number_format($amount, 2),
 
                     'paid_amount_display' =>
-                        'RM ' . number_format($amount, 2),
+                    'RM ' . number_format($amount, 2),
 
                     'receipt_date' =>
-                        optional(
-                            $receipt->receipt_date
-                        )->format('d/m/Y') ?? '-',
+                    optional(
+                        $receipt->receipt_date
+                    )->format('d/m/Y') ?? '-',
 
                     'paid_date' =>
-                        optional($paidAt)->format('d/m/Y') ?? '-',
+                    optional($paidAt)->format('d/m/Y') ?? '-',
 
                     'paid_at' =>
-                        optional($paidAt)->toDateTimeString(),
+                    optional($paidAt)->toDateTimeString(),
 
                     'status' =>
-                        $receipt->status ?? 'valid',
+                    $receipt->status ?? 'valid',
 
                     'paid' => true,
 
                     'activity_name' =>
-                        $invoiceApplication?->activity_name
+                    $invoiceApplication?->activity_name
                         ?? $invoiceApplication?->activity_details
                         ?? '-',
 
                     'activity_details' =>
-                        $invoiceApplication?->activity_details
+                    $invoiceApplication?->activity_details
                         ?? $invoiceApplication?->activity_name
                         ?? '-',
 
                     'invoice' => $invoice
                         ? [
                             'invoice_id' =>
-                                $invoice->invoice_id,
+                            $invoice->invoice_id,
 
                             'invoice_no' =>
-                                $invoice->invoice_no,
+                            $invoice->invoice_no,
 
                             'application_id' =>
-                                $invoice->application_id,
+                            $invoice->application_id,
 
                             'status' =>
-                                $invoice->status,
+                            $invoice->status,
                         ]
                         : null,
 
                     'payment' => $payment
                         ? [
                             'payment_id' =>
-                                $payment->payment_id,
+                            $payment->payment_id,
 
                             'invoice_id' =>
-                                $payment->invoice_id,
+                            $payment->invoice_id,
 
                             'amount' =>
-                                (float) $payment->amount,
+                            (float) $payment->amount,
 
                             'payment_status' =>
-                                $payment->payment_status,
+                            $payment->payment_status,
 
                             'payment_date' =>
-                                optional(
-                                    $payment->payment_date
-                                )->toDateTimeString(),
+                            optional(
+                                $payment->payment_date
+                            )->toDateTimeString(),
 
                             'transaction_ref_no' =>
-                                $payment->transaction_ref_no,
+                            $payment->transaction_ref_no,
                         ]
                         : null,
                 ];
@@ -2104,7 +2173,7 @@ class WaterApplicationController extends Controller
                 ->values()
                 ->all();
         }
-    
+
         $detail['invoice_items'] = $invoiceItems;
         $detail['receipt_items'] = $receiptItems;
         $detail['processing_invoice_activities'] = $processingInvoiceActivities;

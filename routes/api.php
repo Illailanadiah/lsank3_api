@@ -67,8 +67,25 @@ Route::middleware('auth:sanctum')->group(function () {
     |--------------------------------------------------------------------------
     */
 
-    Route::get('/users', [AuthController::class, 'users']);
-    Route::post('/users', [AuthController::class, 'createUser']);
+    Route::get('/users', [
+        AuthController::class,
+        'users',
+    ]);
+
+    Route::post('/users', [
+        AuthController::class,
+        'createUser',
+    ]);
+
+    Route::put('/users/{userId}', [
+        AuthController::class,
+        'updateUser',
+    ])->whereNumber('userId');
+
+    Route::delete('/users/{userId}', [
+        AuthController::class,
+        'deleteUser',
+    ])->whereNumber('userId');
 
     /*
     |--------------------------------------------------------------------------

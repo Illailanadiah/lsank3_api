@@ -173,4 +173,105 @@ class AuthController extends Controller
             'data' => $user,
         ], 201);
     }
+
+    public function updateUser(Request $request, string $userId)
+    {
+        $user = LsankUser::find($userId);
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Pengguna tidak dijumpai.',
+            ], 404);
+        }
+
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => [
+                'required',
+                'email',
+                'max:255',
+                'unique:lsank_users,email,' . $user->user_id . ',user_id',
+            ],
+            'phone' => 'nullable|string|max:30',
+            'ic_no' => [
+                'required',
+                'string',
+                'max:20',
+                'unique:lsank_users,ic_no,' . $user->user_id . ',user_id',
+            ],
+            'user_type' => 'required|string|max:100',
+            'password' => 'nullable|string|min:8',
+        ]);
+
+        $user->name = $validated['name'];
+        $user->email = strtolower($validated['email']);
+        $user->phone = $validated['phone'] ?? null;
+        $user->ic_no = $validated['ic_no'];
+        $user->user_type = $validated['user_type'];
+
+        if (!empty($validated['password'])) {
+            $user->password = Hash::make($validated['password']);
+        }
+
+        $user->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Maklumat pengguna berjaya dikemaskini.',
+            'data' => $user->only([
+                'user_id',
+                'name',
+                'ic_no',
+                'email',
+                'phone',
+                'user_type',
+                'status',
+                'created_at',
+            ]),
+        ]);
+    }
+
+    public function deleteUser(Request $request, string $userId)
+    {
+        $currentUser = $request->user();
+
+        if ((string) $currentUser->user_id === (string) $userId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Anda tidak boleh menyahaktifkan akaun sendiri.',
+            ], 422);
+        }
+
+        $user = LsankUser::find($userId);
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Pengguna tidak dijumpai.',
+            ], 404);
+        }
+
+        if ($user->status === 'inactive') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Akaun pengguna ini telah dinyahaktifkan.',
+            ], 422);
+        }
+
+        $user->status = 'inactive';
+        $user->save();
+
+        // Batalkan semua token login pengguna.
+        $user->tokens()->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Akaun pengguna berjaya dinyahaktifkan.',
+            'data' => [
+                'user_id' => $user->user_id,
+                'status' => $user->status,
+            ],
+        ]);
+    }
 }

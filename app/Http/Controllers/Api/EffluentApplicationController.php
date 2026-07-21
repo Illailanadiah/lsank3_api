@@ -537,11 +537,6 @@ class EffluentApplicationController extends Controller
             * Ini membolehkan senarai dan butiran invois membaca
             * nilai sebenar daripada jadual lsank_invoices.
             */
-            if (empty($invoice->payment_type)) {
-                $invoice->payment_type = 'Fi Pemprosesan';
-                $invoice->save();
-            }
-
             $application->application_status_id =
                 $statusId;
 
@@ -1019,10 +1014,6 @@ class EffluentApplicationController extends Controller
 
                 $application->save();
 
-                $processingInvoice->payment_type =
-                    $processingInvoice->payment_type
-                    ?? 'Fi Pemprosesan';
-
                 $processingInvoice->status =
                     'paid';
 
@@ -1479,9 +1470,6 @@ public function destroyDraft(Request $request, LsankApplication $application)
                     $invoice->user_id =
                         $application->user_id;
 
-                    $invoice->payment_type =
-                        'Fi Pemprosesan';
-
                     $invoice->invoice_date =
                         $invoice->invoice_date
                         ?? now()->toDateString();
@@ -1528,9 +1516,6 @@ public function destroyDraft(Request $request, LsankApplication $application)
 
             $invoice->invoice_no =
                 $invoiceNo;
-
-            $invoice->payment_type =
-                'Fi Pemprosesan';
 
             $invoice->invoice_date =
                 now()->toDateString();

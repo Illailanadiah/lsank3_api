@@ -380,16 +380,16 @@ class ApplicationController extends Controller
             'invoice_manual_reason' => 'nullable|string',
             'license_start_date' => 'nullable|string|max:50',
             'license_end_date' => 'nullable|string|max:50',
-        'assigned_to_name' => 'nullable|string|max:255',
-'assigned_to_email' => 'nullable|email|max:255',
-'assigned_to_role' => 'nullable|string|max:100',
-'workflow_stage' => 'nullable|string|max:100',
+            'assigned_to_name' => 'nullable|string|max:255',
+            'assigned_to_email' => 'nullable|email|max:255',
+            'assigned_to_role' => 'nullable|string|max:100',
+            'workflow_stage' => 'nullable|string|max:100',
 
-'head_remark' => 'nullable|string',
-'head_feedback' => 'nullable|string',
-'head_feedback_target' => 'nullable|string|max:100',
-'head_officer_name' => 'nullable|string|max:255',
-'head_officer_email' => 'nullable|email|max:255',
+            'head_remark' => 'nullable|string',
+            'head_feedback' => 'nullable|string',
+            'head_feedback_target' => 'nullable|string|max:100',
+            'head_officer_name' => 'nullable|string|max:255',
+            'head_officer_email' => 'nullable|email|max:255',
             ]);
 
 
@@ -430,32 +430,32 @@ class ApplicationController extends Controller
 
 
         $workflowFields = [
-    'assigned_to_name',
-    'assigned_to_email',
-    'assigned_to_role',
-    'workflow_stage',
+            'assigned_to_name',
+            'assigned_to_email',
+            'assigned_to_role',
+            'workflow_stage',
 
-    'head_remark',
-    'head_feedback',
-    'head_feedback_target',
-    'head_officer_name',
-    'head_officer_email',
+            'head_remark',
+            'head_feedback',
+            'head_feedback_target',
+            'head_officer_name',
+            'head_officer_email',
 
-    'technical_feedback',
-    'technical_feedback_target',
-    'technical_feedback_target_name',
-    'technical_feedback_target_email',
-    'technical_officer_name',
-    'technical_officer_email',
+            'technical_feedback',
+            'technical_feedback_target',
+            'technical_feedback_target_name',
+            'technical_feedback_target_email',
+            'technical_officer_name',
+            'technical_officer_email',
 
-    'user_resubmission_required',
-    'resubmit_duration_days',
-    'resubmit_due_date',
+            'user_resubmission_required',
+            'resubmit_duration_days',
+            'resubmit_due_date',
 
-    'director_remark',
-    'director_feedback',
-    'director_decision',
-];
+            'director_remark',
+            'director_feedback',
+            'director_decision',
+        ];
 
 $workflowData = [];
 

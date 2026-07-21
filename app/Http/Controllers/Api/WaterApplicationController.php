@@ -44,7 +44,7 @@ class WaterApplicationController extends Controller
                     : [];
 
                 $splitBatchId = $draftData['split_batch_id'] ?? null;
- 
+
                 $invoiceApplicationIds = [$application->application_id];
 
                 if ($splitBatchId) {
@@ -1950,24 +1950,28 @@ class WaterApplicationController extends Controller
     {
         $year = now()->format('Y');
 
-        $latestInvoice = LsankInvoice::where('invoice_no', 'like', 'INVOIS-' . $year . '-%')
+        $latestInvoice = LsankInvoice::where(
+            'invoice_no',
+            'like',
+            'INVOIS-' . $year . '-%'
+        )
             ->orderByDesc('invoice_id')
             ->first();
 
         if (!$latestInvoice || empty($latestInvoice->invoice_no)) {
-            return 101;
+            return 1;
         }
 
         $parts = explode('-', $latestInvoice->invoice_no);
 
         if (count($parts) < 3) {
-            return 101;
+            return 1;
         }
 
         $latestRunningNo = (int) $parts[2];
 
-        if ($latestRunningNo < 101) {
-            return 101;
+        if ($latestRunningNo < 1) {
+            return 1;
         }
 
         return $latestRunningNo + 1;

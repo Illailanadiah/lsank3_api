@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
+
 class LsankApplication extends Model
 {
     protected $table = 'lsank_applications';

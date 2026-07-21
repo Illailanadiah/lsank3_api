@@ -87,6 +87,11 @@ Route::middleware('auth:sanctum')->group(function () {
         'deleteUser',
     ])->whereNumber('userId');
 
+    Route::put('/users/{userId}/activate', [
+        AuthController::class,
+        'activateUser',
+    ])->whereNumber('userId');
+
     /*
     |--------------------------------------------------------------------------
     | User Side - Water Applications

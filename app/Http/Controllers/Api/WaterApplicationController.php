@@ -13,6 +13,7 @@ use App\Models\LsankWaterBodyApplication;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Models\LsankInvoice;
+use App\Services\LicenseService;
 
 class WaterApplicationController extends Controller
 {
@@ -1280,6 +1281,359 @@ class WaterApplicationController extends Controller
 
                     'paid_at' =>
                         now()->toDateTimeString(),
+                ],
+            ]);
+        });
+    }
+
+    public function payFinal(
+        Request $request,
+        LsankApplication $application,
+        LicenseService $licenseService
+    ) {
+        if (
+            (int) $application->user_id !==
+            (int) $request->user()->user_id
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Permohonan tidak dijumpai.',
+            ], 404);
+        }
+
+        $typeId = $this->applicationTypeId(
+            self::TYPE_CODE,
+            self::TYPE_NAME
+        );
+
+        if (
+            (int) $application->application_type_id !==
+            (int) $typeId
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Permohonan badan perairan tidak dijumpai.',
+            ], 404);
+        }
+
+        if (!$application->isDirectorApproved()) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Permohonan belum diluluskan oleh Ketua Pengarah.',
+            ], 422);
+        }
+
+        $reviewData = is_array($application->review_data)
+            ? $application->review_data
+            : [];
+
+        $finalInvoiceStatus = strtolower(
+            trim(
+                (string) (
+                    $reviewData['final_invoice_status']
+                    ?? ''
+                )
+            )
+        );
+
+        /*
+     * Aktiviti kerajaan tidak perlu membuat bayaran akhir.
+     * Lesen sepatutnya sudah dijana selepas Pengarah lulus.
+     */
+        if ($finalInvoiceStatus === 'exempt') {
+            $license = $application->license;
+
+            return response()->json([
+                'success' => true,
+                'message' =>
+                'Permohonan ini dikecualikan daripada bayaran akhir.',
+
+                'data' => [
+                    'application_id' =>
+                    $application->application_id,
+
+                    'license_id' =>
+                    $license?->license_id,
+
+                    'license_no' =>
+                    $license?->license_no,
+
+                    'payment_status' =>
+                    $application->payment_status,
+                ],
+            ]);
+        }
+
+        return DB::transaction(function () use (
+            $application,
+            $licenseService
+        ) {
+            /*
+         * Ambil invois akhir sahaja.
+         * Fi Pemprosesan RM150 tidak termasuk.
+         */
+            $finalInvoices = LsankInvoice::query()
+                ->where(
+                    'application_id',
+                    $application->application_id
+                )
+                ->whereIn('payment_type', [
+                    'Fi Lesen',
+                    'Fi Caj',
+                    'Wang Sekuriti',
+                ])
+                ->orderBy('invoice_id')
+                ->lockForUpdate()
+                ->get();
+
+            if ($finalInvoices->isEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' =>
+                    'Tiada invois bayaran akhir dijumpai.',
+                ], 422);
+            }
+
+            $paidInvoices = [];
+            $receiptItems = [];
+
+            foreach ($finalInvoices as $invoice) {
+                /*
+             * Jika sudah dibayar sebelum ini,
+             * jangan cipta bayaran dan resit berganda.
+             */
+                if (
+                    strtolower(
+                        trim((string) $invoice->status)
+                    ) !== 'paid'
+                ) {
+                    $invoice->status = 'paid';
+                    $invoice->save();
+                }
+
+                $payment = LsankPayment::updateOrCreate(
+                    [
+                        'invoice_id' =>
+                        $invoice->invoice_id,
+                    ],
+                    [
+                        'payment_method_id' => null,
+
+                        'amount' =>
+                        (float) $invoice->total_amount,
+
+                        'payment_status' => 'successful',
+
+                        'payment_date' => now(),
+
+                        'transaction_ref_no' =>
+                        'TEST-WATER-FINAL-'
+                            . $application->application_id
+                            . '-'
+                            . $invoice->invoice_id
+                            . '-'
+                            . now()->format('YmdHis'),
+                    ]
+                );
+
+                $year = now()->format('Y');
+
+                $receiptRunningNo = str_pad(
+                    (string) $invoice->invoice_id,
+                    4,
+                    '0',
+                    STR_PAD_LEFT
+                );
+
+                $feeCode = match ($invoice->payment_type) {
+                    'Fi Lesen' => '02',
+                    'Fi Caj' => '03',
+                    'Wang Sekuriti' => '04',
+                    default => '00',
+                };
+
+                $receiptNo =
+                    'RESIT-'
+                    . $year
+                    . '-'
+                    . $receiptRunningNo
+                    . '-'
+                    . $feeCode;
+
+                $receipt = LsankReceipt::updateOrCreate(
+                    [
+                        'invoice_id' =>
+                        $invoice->invoice_id,
+                    ],
+                    [
+                        'payment_id' =>
+                        $payment->payment_id,
+
+                        'receipt_no' =>
+                        $receiptNo,
+
+                        'amount' =>
+                        (float) $invoice->total_amount,
+
+                        'receipt_date' => now(),
+
+                        'status' => 'valid',
+                    ]
+                );
+
+                $paidInvoices[] = $invoice;
+                $receiptItems[] = $receipt;
+            }
+
+            /*
+         * Pastikan tiada lagi invois akhir yang belum dibayar.
+         */
+            $hasUnpaidFinalInvoice = LsankInvoice::query()
+                ->where(
+                    'application_id',
+                    $application->application_id
+                )
+                ->whereIn('payment_type', [
+                    'Fi Lesen',
+                    'Fi Caj',
+                    'Wang Sekuriti',
+                ])
+                ->where('status', '!=', 'paid')
+                ->exists();
+
+            if ($hasUnpaidFinalInvoice) {
+                return response()->json([
+                    'success' => true,
+                    'message' =>
+                    'Bayaran direkodkan. Masih terdapat invois akhir yang belum dibayar.',
+
+                    'data' => [
+                        'application_id' =>
+                        $application->application_id,
+
+                        'license_generated' => false,
+                    ],
+                ]);
+            }
+
+            /*
+         * Semua invois akhir sudah dibayar.
+         */
+            $latestReviewData = is_array(
+                $application->review_data
+            )
+                ? $application->review_data
+                : [];
+
+            $latestReviewData['final_invoice_status'] =
+                'paid';
+
+            $latestReviewData['final_paid_at'] =
+                now()->toDateTimeString();
+
+            $application->payment_status =
+                LsankApplication::PAYMENT_SUDAH_BAYAR;
+
+            $application->review_data =
+                $latestReviewData;
+
+            $application->save();
+
+            /*
+         * Jana lesen selepas semua bayaran akhir selesai.
+         */
+            $license =
+                $licenseService->generateForApprovedApplication(
+                    $application->fresh()
+                );
+
+            /*
+         * Sambungkan invois akhir kepada lesen.
+         */
+            LsankInvoice::query()
+                ->where(
+                    'application_id',
+                    $application->application_id
+                )
+                ->whereIn('payment_type', [
+                    'Fi Lesen',
+                    'Fi Caj',
+                    'Wang Sekuriti',
+                ])
+                ->update([
+                    'license_id' =>
+                    $license->license_id,
+                ]);
+
+            $latestReviewData =
+                $application->fresh()->review_data;
+
+            $latestReviewData = is_array(
+                $latestReviewData
+            )
+                ? $latestReviewData
+                : [];
+
+            $latestReviewData['license_generation_status'] =
+                'generated';
+
+            $latestReviewData['license_id'] =
+                $license->license_id;
+
+            $latestReviewData['license_no'] =
+                $license->license_no;
+
+            $latestReviewData['license_generated_at'] =
+                now()->toDateTimeString();
+
+            $application->review_data =
+                $latestReviewData;
+
+            $application->save();
+
+            return response()->json([
+                'success' => true,
+
+                'message' =>
+                'Bayaran akhir berjaya. Lesen telah dijana.',
+
+                'data' => [
+                    'application_id' =>
+                    $application->application_id,
+
+                    'payment_status' =>
+                    LsankApplication::PAYMENT_SUDAH_BAYAR,
+
+                    'invoice_ids' =>
+                    collect($paidInvoices)
+                        ->pluck('invoice_id')
+                        ->values()
+                        ->all(),
+
+                    'receipt_ids' =>
+                    collect($receiptItems)
+                        ->pluck('receipt_id')
+                        ->values()
+                        ->all(),
+
+                    'license_id' =>
+                    $license->license_id,
+
+                    'license_no' =>
+                    $license->license_no,
+
+                    'license_start_date' =>
+                    optional($license->start_date)
+                        ->format('Y-m-d'),
+
+                    'license_expiry_date' =>
+                    optional($license->expiry_date)
+                        ->format('Y-m-d'),
+
+                    'license_status' =>
+                    $license->display_status,
                 ],
             ]);
         });

@@ -1662,6 +1662,10 @@ class WaterApplicationController extends Controller
 
             $application->save();
 
+            $totalPaidAmount = collect($paidInvoices)->sum(
+                fn($invoice) => (float) $invoice->total_amount
+            );
+
             return response()->json([
                 'success' => true,
 
@@ -1669,15 +1673,35 @@ class WaterApplicationController extends Controller
                 'Bayaran akhir berjaya. Lesen telah dijana.',
 
                 'data' => [
+                    'final_payment' => true,
+
                     'application_id' =>
                     $application->application_id,
+
+                    'application_no' =>
+                    $application->application_ref_no,
+
+                    'application_ref_no' =>
+                    $application->application_ref_no,
 
                     'payment_status' =>
                     LsankApplication::PAYMENT_SUDAH_BAYAR,
 
+                    'payment_status_display' =>
+                    'Sudah Bayar',
+
+                    'status_display' =>
+                    'Lulus',
+
                     'invoice_ids' =>
                     collect($paidInvoices)
                         ->pluck('invoice_id')
+                        ->values()
+                        ->all(),
+
+                    'invoice_nos' =>
+                    collect($paidInvoices)
+                        ->pluck('invoice_no')
                         ->values()
                         ->all(),
 
@@ -1686,6 +1710,21 @@ class WaterApplicationController extends Controller
                         ->pluck('receipt_id')
                         ->values()
                         ->all(),
+
+                    'receipt_nos' =>
+                    collect($receiptItems)
+                        ->pluck('receipt_no')
+                        ->values()
+                        ->all(),
+
+                    'amount' =>
+                    $totalPaidAmount,
+
+                    'total_amount' =>
+                    $totalPaidAmount,
+
+                    'paid_at' =>
+                    now()->toDateTimeString(),
 
                     'license_id' =>
                     $license->license_id,

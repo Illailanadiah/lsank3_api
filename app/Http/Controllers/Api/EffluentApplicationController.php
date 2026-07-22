@@ -152,7 +152,7 @@ class EffluentApplicationController extends Controller
                         $application->application_ref_no,
 
                     'payment_type' =>
-                        $invoice->payment_type
+                        $paidInvoice['payment_type']
                         ?? 'Fi Pemprosesan',
 
                     'amount' => (float) (
@@ -1188,6 +1188,406 @@ class EffluentApplicationController extends Controller
             }
         );
     }
+
+public function payInvoice(
+    Request $request,
+    LsankApplication $application,
+    LsankInvoice $invoice
+) {
+    /*
+     * Pastikan permohonan milik pengguna.
+     */
+    if (
+        (int) $application->user_id !==
+        (int) $request->user()->user_id
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Permohonan tidak dijumpai.',
+        ], 404);
+    }
+
+    /*
+     * Pastikan permohonan ialah permohonan efluen.
+     */
+    $typeId = $this->applicationTypeId(
+        self::TYPE_CODE,
+        self::TYPE_NAME
+    );
+
+    if (
+        (int) $application->application_type_id !==
+        (int) $typeId
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Permohonan efluen tidak dijumpai.',
+        ], 404);
+    }
+
+    /*
+     * Pastikan invois tersebut milik permohonan ini.
+     */
+    if (
+        (int) $invoice->application_id !==
+        (int) $application->application_id
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' =>
+                'Invois tidak sepadan dengan permohonan ini.',
+        ], 422);
+    }
+
+    /*
+     * Pastikan invois milik pengguna.
+     */
+    if (
+        (int) $invoice->user_id !==
+        (int) $request->user()->user_id
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Invois tidak dijumpai.',
+        ], 404);
+    }
+
+    /*
+     * Pastikan permohonan berada di peringkat pembayaran.
+     */
+    if (
+        $application->application_status !==
+        LsankApplication::STATUS_FI_PEMPROSESAN
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' =>
+                'Permohonan ini belum berada di peringkat fi pemprosesan.',
+        ], 422);
+    }
+
+    /*
+     * Pastikan invois belum dibayar.
+     */
+    if (
+        strtolower(trim((string) $invoice->status)) ===
+        'paid'
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Invois ini telah dibayar.',
+        ], 422);
+    }
+
+    /*
+     * Elakkan resit berganda.
+     */
+    if (
+        LsankReceipt::where(
+            'invoice_id',
+            $invoice->invoice_id
+        )->exists()
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' =>
+                'Bayaran bagi invois ini telah direkodkan.',
+        ], 422);
+    }
+
+    return DB::transaction(function () use (
+        $application,
+        $invoice
+    ) {
+        /*
+         * Lock application dan invoice.
+         */
+        $lockedApplication = LsankApplication::query()
+            ->where(
+                'application_id',
+                $application->application_id
+            )
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        $lockedInvoice = LsankInvoice::query()
+            ->where(
+                'invoice_id',
+                $invoice->invoice_id
+            )
+            ->where(
+                'application_id',
+                $lockedApplication->application_id
+            )
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        if (
+            strtolower(
+                trim((string) $lockedInvoice->status)
+            ) === 'paid'
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invois ini telah dibayar.',
+            ], 422);
+        }
+
+        /*
+         * Dapatkan status Dalam Proses.
+         */
+        $statusId = $this->applicationStatusId(
+            'in_process',
+            'Dalam Proses',
+            3
+        );
+
+        /*
+         * Dapatkan kod jenis perkhidmatan efluen.
+         */
+        $lockedApplication->loadMissing(
+            'effluent.serviceType'
+        );
+
+        $serviceCode = optional(
+            optional(
+                $lockedApplication->effluent
+            )->serviceType
+        )->service_code ?? '600-21';
+
+        /*
+         * Jana nombor fail sebenar jika masih nombor draf.
+         */
+        if (
+            empty($lockedApplication->application_ref_no) ||
+            str_starts_with(
+                strtoupper(
+                    $lockedApplication->application_ref_no
+                ),
+                'DRAF-'
+            )
+        ) {
+            $lockedApplication->application_ref_no =
+                $this->generateApplicationFileNo(
+                    $serviceCode,
+                    $this->districtCode(
+                        $lockedApplication->district
+                    )
+                );
+        }
+
+        /*
+         * Kemaskini status permohonan.
+         */
+        $lockedApplication->application_status_id =
+            $statusId;
+
+        $lockedApplication->application_status =
+            LsankApplication::STATUS_DALAM_PROSES;
+
+        $lockedApplication->payment_status =
+            LsankApplication::PAYMENT_SUDAH_BAYAR;
+
+        $lockedApplication->submitted_at = now();
+
+        $lockedApplication->submitted_data =
+            $lockedApplication->draft_data;
+
+        $lockedApplication->remarks = trim(
+            ($lockedApplication->remarks ?? '')
+            . "\nBayaran satu invois efluen berjaya pada "
+            . now()->format('d/m/Y H:i')
+        );
+
+        $lockedApplication->save();
+
+        /*
+         * Tandakan hanya invois yang dipilih sebagai paid.
+         */
+        $lockedInvoice->status = 'paid';
+        $lockedInvoice->save();
+
+        /*
+         * Simpan bayaran.
+         */
+        $payment = LsankPayment::updateOrCreate(
+            [
+                'invoice_id' =>
+                    $lockedInvoice->invoice_id,
+            ],
+            [
+                'payment_method_id' => null,
+
+                'amount' =>
+                    (float) $lockedInvoice->total_amount,
+
+                'payment_status' =>
+                    'successful',
+
+                'payment_date' => now(),
+
+                'transaction_ref_no' =>
+                    'TEST-EFF-SINGLE-'
+                    . $lockedApplication->application_id
+                    . '-'
+                    . $lockedInvoice->invoice_id
+                    . '-'
+                    . now()->format('YmdHis'),
+            ]
+        );
+
+        /*
+         * Jana nombor resit.
+         */
+        $year = now()->format('Y');
+
+        $runningNo = str_pad(
+            (string) $lockedInvoice->invoice_id,
+            4,
+            '0',
+            STR_PAD_LEFT
+        );
+
+        $receiptNo =
+            'RESIT-'
+            . $year
+            . '-'
+            . $runningNo
+            . '-01';
+
+        /*
+         * Simpan resit.
+         */
+        $receipt = LsankReceipt::updateOrCreate(
+            [
+                'invoice_id' =>
+                    $lockedInvoice->invoice_id,
+            ],
+            [
+                'receipt_no' =>
+                    $receiptNo,
+
+                'payment_id' =>
+                    $payment->payment_id,
+
+                'receipt_date' =>
+                    now()->toDateString(),
+
+                'amount' =>
+                    (float) $lockedInvoice->total_amount,
+
+                'receipt_pdf_path' => null,
+
+                'status' => 'valid',
+            ]
+        );
+
+        return response()->json([
+            'success' => true,
+
+            'message' =>
+                'Bayaran invois berjaya. Permohonan efluen telah dihantar untuk semakan.',
+
+            'data' => [
+                'id' =>
+                    $lockedApplication->application_id,
+
+                'application_id' =>
+                    $lockedApplication->application_id,
+
+                'application_ids' => [
+                    $lockedApplication->application_id,
+                ],
+
+                'application_no' =>
+                    $lockedApplication->application_ref_no,
+
+                'application_ref_no' =>
+                    $lockedApplication->application_ref_no,
+
+                'application_nos' => [
+                    $lockedApplication->application_ref_no,
+                ],
+
+                'application_ref_nos' => [
+                    $lockedApplication->application_ref_no,
+                ],
+
+                'invoice_id' =>
+                    $lockedInvoice->invoice_id,
+
+                'invoice_ids' => [
+                    $lockedInvoice->invoice_id,
+                ],
+
+                'invoice_no' =>
+                    $lockedInvoice->invoice_no,
+
+                'invoice_nos' => [
+                    $lockedInvoice->invoice_no,
+                ],
+
+                'payment_id' =>
+                    $payment->payment_id,
+
+                'payment_ids' => [
+                    $payment->payment_id,
+                ],
+
+                'receipt_id' =>
+                    $receipt->receipt_id,
+
+                'receipt_ids' => [
+                    $receipt->receipt_id,
+                ],
+
+                'receipt_no' =>
+                    $receipt->receipt_no,
+
+                'receipt_nos' => [
+                    $receipt->receipt_no,
+                ],
+
+                'payment_type' =>
+                    $lockedInvoice->payment_type
+                    ?? 'Fi Pemprosesan',
+
+                'processing_fee' =>
+                    (float) $lockedInvoice->total_amount,
+
+                'processing_fee_display' =>
+                    'RM ' . number_format(
+                        (float) $lockedInvoice->total_amount,
+                        2
+                    ),
+
+                'amount' =>
+                    (float) $lockedInvoice->total_amount,
+
+                'status' =>
+                    LsankApplication::STATUS_DALAM_PROSES,
+
+                'status_display' =>
+                    'Dalam Proses',
+
+                'application_status' =>
+                    LsankApplication::STATUS_DALAM_PROSES,
+
+                'application_status_display' =>
+                    'Dalam Proses',
+
+                'payment_status' =>
+                    LsankApplication::PAYMENT_SUDAH_BAYAR,
+
+                'payment_status_display' =>
+                    'Sudah Bayar',
+
+                'paid_at' =>
+                    now()->toDateTimeString(),
+            ],
+        ]);
+    });
+}
 
 public function destroyDraft(Request $request, LsankApplication $application)
 {

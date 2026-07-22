@@ -1355,6 +1355,742 @@ class WaterApplicationController extends Controller
         });
     }
 
+    public function payInvoice(
+    Request $request,
+    LsankApplication $application,
+    LsankInvoice $invoice
+) {
+    /*
+     * Pastikan permohonan milik pengguna yang sedang login.
+     */
+    if (
+        (int) $application->user_id !==
+        (int) $request->user()->user_id
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Permohonan tidak dijumpai.',
+        ], 404);
+    }
+
+    /*
+     * Pastikan permohonan ialah jenis Water.
+     */
+    $typeId = $this->applicationTypeId(
+        self::TYPE_CODE,
+        self::TYPE_NAME
+    );
+
+    if (
+        (int) $application->application_type_id !==
+        (int) $typeId
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' =>
+                'Permohonan badan perairan tidak dijumpai.',
+        ], 404);
+    }
+
+    /*
+     * Pastikan invois yang dihantar memang milik permohonan ini.
+     */
+    if (
+        (int) $invoice->application_id !==
+        (int) $application->application_id
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' =>
+                'Invois tidak sepadan dengan permohonan ini.',
+        ], 422);
+    }
+
+    /*
+     * Pastikan invois juga milik pengguna yang sama.
+     */
+    if (
+        (int) $invoice->user_id !==
+        (int) $request->user()->user_id
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Invois tidak dijumpai.',
+        ], 404);
+    }
+
+    /*
+     * Hanya invois belum dibayar boleh diproses.
+     */
+    if (
+        strtolower(trim((string) $invoice->status)) ===
+        'paid'
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Invois ini telah dibayar.',
+        ], 422);
+    }
+
+    /*
+     * Elakkan pembayaran/resit berganda.
+     */
+    $existingReceipt = LsankReceipt::query()
+        ->where('invoice_id', $invoice->invoice_id)
+        ->exists();
+
+    if ($existingReceipt) {
+        return response()->json([
+            'success' => false,
+            'message' =>
+                'Bayaran bagi invois ini telah direkodkan.',
+        ], 422);
+    }
+
+    /*
+     * Pembayaran satu invois hanya untuk Fi Pemprosesan.
+     */
+    $paymentType = trim(
+        (string) (
+            $invoice->payment_type ??
+            'Fi Pemprosesan'
+        )
+    );
+
+    if ($paymentType !== 'Fi Pemprosesan') {
+        return response()->json([
+            'success' => false,
+            'message' =>
+                'Invois ini bukan invois Fi Pemprosesan.',
+        ], 422);
+    }
+
+    if (
+        $application->application_status !==
+        LsankApplication::STATUS_FI_PEMPROSESAN
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' =>
+                'Permohonan ini bukan lagi di peringkat Fi Pemprosesan.',
+        ], 422);
+    }
+
+    return DB::transaction(function () use (
+        $application,
+        $invoice
+    ) {
+        /*
+         * Lock permohonan dan invois supaya pembayaran
+         * yang sama tidak diproses dua kali serentak.
+         */
+        $lockedApplication = LsankApplication::query()
+            ->where(
+                'application_id',
+                $application->application_id
+            )
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        $lockedInvoice = LsankInvoice::query()
+            ->where(
+                'invoice_id',
+                $invoice->invoice_id
+            )
+            ->where(
+                'application_id',
+                $lockedApplication->application_id
+            )
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        if (
+            strtolower(
+                trim((string) $lockedInvoice->status)
+            ) === 'paid'
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invois ini telah dibayar.',
+            ], 422);
+        }
+
+        $draftData = is_array(
+            $lockedApplication->draft_data
+        )
+            ? $lockedApplication->draft_data
+            : [];
+
+        /*
+         * Senarai aktiviti asal mengikut susunan invois.
+         */
+        $selectedActivities =
+            $draftData['processing_invoice_activities']
+            ?? $draftData['original_selected_activities']
+            ?? $draftData['selected_activities']
+            ?? [];
+
+        if (
+            !is_array($selectedActivities) ||
+            empty($selectedActivities)
+        ) {
+            $selectedActivities = [
+                $lockedApplication->activity_name
+                    ?? $lockedApplication->activity_details
+                    ?? 'Aktiviti Rekreasi Sukan Air',
+            ];
+        }
+
+        $selectedActivities = collect(
+            $selectedActivities
+        )
+            ->map(
+                fn($item) => trim((string) $item)
+            )
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($selectedActivities->isEmpty()) {
+            $selectedActivities = collect([
+                'Aktiviti Rekreasi Sukan Air',
+            ]);
+        }
+
+        /*
+         * Ambil invois belum bayar bagi permohonan asal
+         * mengikut susunan invoice_id.
+         */
+        $unpaidInvoices = LsankInvoice::query()
+            ->where(
+                'application_id',
+                $lockedApplication->application_id
+            )
+            ->where('status', 'unpaid')
+            ->orderBy('invoice_id')
+            ->lockForUpdate()
+            ->get()
+            ->values();
+
+        /*
+         * Cari index invois yang ditekan.
+         * Index ini digunakan untuk menentukan aktiviti.
+         */
+        $invoiceIndex = $unpaidInvoices->search(
+            fn($item) =>
+                (int) $item->invoice_id ===
+                (int) $lockedInvoice->invoice_id
+        );
+
+        if ($invoiceIndex === false) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'Invois belum bayar tidak dijumpai.',
+            ], 422);
+        }
+
+        $selectedActivity =
+            $selectedActivities->get(
+                $invoiceIndex
+            )
+            ?? $selectedActivities->first()
+            ?? $lockedApplication->activity_name
+            ?? 'Aktiviti Rekreasi Sukan Air';
+
+        $remainingActivities =
+            $selectedActivities
+                ->reject(
+                    fn($item, $index) =>
+                        (int) $index ===
+                        (int) $invoiceIndex
+                )
+                ->values();
+
+        $statusId = $this->applicationStatusId(
+            'in_process',
+            'Dalam Proses',
+            3
+        );
+
+        $splitBatchId =
+            $draftData['split_batch_id']
+            ?? 'WATER-BATCH-'
+                . $lockedApplication->application_id
+                . '-'
+                . now()->format('YmdHis');
+
+        $originalApplicationId =
+            $lockedApplication->application_id;
+
+        /*
+         * Jika masih ada aktiviti lain yang belum dibayar:
+         *
+         * - Permohonan asal kekal Fi Pemprosesan.
+         * - Cipta satu child application bagi aktiviti dibayar.
+         *
+         * Jika ini aktiviti terakhir:
+         *
+         * - Gunakan terus permohonan asal.
+         */
+        if ($remainingActivities->isNotEmpty()) {
+            $paidApplication =
+                $lockedApplication->replicate();
+
+            $paidApplication->exists = false;
+            $paidApplication->application_id = null;
+
+            $paidDraftData =
+                $this->waterDraftDataForActivity(
+                    $draftData,
+                    $selectedActivity
+                );
+
+            $paidDraftData['selected_activities'] = [
+                $selectedActivity,
+            ];
+
+            $paidDraftData[
+                'processing_invoice_activities'
+            ] = [
+                $selectedActivity,
+            ];
+
+            $paidDraftData[
+                'original_selected_activities'
+            ] = $selectedActivities->values()->all();
+
+            $paidDraftData['split_batch_id'] =
+                $splitBatchId;
+
+            $paidDraftData['is_split_child'] = true;
+            $paidDraftData['is_split_parent'] = false;
+
+            $paidDraftData[
+                'split_from_application_id'
+            ] = $originalApplicationId;
+
+            $paidApplication->draft_data =
+                $paidDraftData;
+
+            $paidApplication->submitted_data =
+                $paidDraftData;
+
+            $paidApplication->activity_name =
+                $selectedActivity;
+
+            $paidApplication->activity_type =
+                $selectedActivity;
+
+            $paidApplication->activity_details =
+                $selectedActivity;
+
+            $paidApplication->application_ref_no =
+                $this->generateApplicationFileNo(
+                    $this->waterSectionCode(
+                        $selectedActivity
+                    ),
+                    $this->districtCode(
+                        $lockedApplication->district
+                    )
+                );
+
+            $paidApplication->application_status_id =
+                $statusId;
+
+            $paidApplication->application_status =
+                LsankApplication::STATUS_DALAM_PROSES;
+
+            $paidApplication->payment_status =
+                LsankApplication::PAYMENT_SUDAH_BAYAR;
+
+            $paidApplication->submitted_at = now();
+
+            $paidApplication->remarks = trim(
+                ($paidApplication->remarks ?? '')
+                    . "\nBayaran satu invois berjaya pada "
+                    . now()->format('d/m/Y H:i')
+            );
+
+            $paidApplication->save();
+
+            $this->syncWaterBodyForActivity(
+                $paidApplication,
+                $selectedActivity
+            );
+
+            /*
+             * Kemas kini permohonan asal dengan aktiviti
+             * yang masih belum dibayar.
+             */
+            $remainingDraftData = $draftData;
+
+            $remainingDraftData['selected_activities'] =
+                $remainingActivities->all();
+
+            $remainingDraftData[
+                'processing_invoice_activities'
+            ] = $remainingActivities->all();
+
+            $remainingDraftData[
+                'original_selected_activities'
+            ] = $selectedActivities->all();
+
+            $remainingDraftData['split_batch_id'] =
+                $splitBatchId;
+
+            $remainingDraftData['is_split_parent'] =
+                true;
+
+            $remainingDraftData['is_split_child'] =
+                false;
+
+            $lockedApplication->draft_data =
+                $remainingDraftData;
+
+            $lockedApplication->activity_name =
+                $remainingActivities->first();
+
+            $lockedApplication->activity_type =
+                $remainingActivities->first();
+
+            $lockedApplication->activity_details =
+                $remainingActivities->first();
+
+            $lockedApplication->application_status =
+                LsankApplication::STATUS_FI_PEMPROSESAN;
+
+            $lockedApplication->payment_status =
+                LsankApplication::PAYMENT_MENUNGGU_BAYARAN;
+
+            $lockedApplication->submitted_at = null;
+
+            $lockedApplication->save();
+
+            $this->syncWaterBodyForActivity(
+                $lockedApplication,
+                $remainingActivities->first()
+            );
+        } else {
+            /*
+             * Ini ialah invois/aktiviti terakhir.
+             * Gunakan permohonan asal dan terus hantar
+             * ke status Dalam Proses.
+             */
+            $paidApplication =
+                $lockedApplication;
+
+            $paidDraftData =
+                $this->waterDraftDataForActivity(
+                    $draftData,
+                    $selectedActivity
+                );
+
+            $paidDraftData['selected_activities'] = [
+                $selectedActivity,
+            ];
+
+            $paidDraftData[
+                'processing_invoice_activities'
+            ] = [
+                $selectedActivity,
+            ];
+
+            $paidDraftData[
+                'original_selected_activities'
+            ] = $selectedActivities->all();
+
+            $paidDraftData['split_batch_id'] =
+                $splitBatchId;
+
+            $paidDraftData['is_split_child'] = true;
+            $paidDraftData['is_split_parent'] = true;
+
+            $paidDraftData[
+                'split_from_application_id'
+            ] = $originalApplicationId;
+
+            $paidApplication->draft_data =
+                $paidDraftData;
+
+            $paidApplication->submitted_data =
+                $paidDraftData;
+
+            $paidApplication->activity_name =
+                $selectedActivity;
+
+            $paidApplication->activity_type =
+                $selectedActivity;
+
+            $paidApplication->activity_details =
+                $selectedActivity;
+
+            /*
+             * Draf asal mungkin masih menggunakan nombor DRAF.
+             * Jana nombor fail sebenar apabila invois dibayar.
+             */
+            if (
+                empty(
+                    $paidApplication->application_ref_no
+                ) ||
+                str_starts_with(
+                    strtoupper(
+                        $paidApplication->application_ref_no
+                    ),
+                    'DRAF-'
+                )
+            ) {
+                $paidApplication->application_ref_no =
+                    $this->generateApplicationFileNo(
+                        $this->waterSectionCode(
+                            $selectedActivity
+                        ),
+                        $this->districtCode(
+                            $paidApplication->district
+                        )
+                    );
+            }
+
+            $paidApplication->application_status_id =
+                $statusId;
+
+            $paidApplication->application_status =
+                LsankApplication::STATUS_DALAM_PROSES;
+
+            $paidApplication->payment_status =
+                LsankApplication::PAYMENT_SUDAH_BAYAR;
+
+            $paidApplication->submitted_at = now();
+
+            $paidApplication->remarks = trim(
+                ($paidApplication->remarks ?? '')
+                    . "\nBayaran satu invois berjaya pada "
+                    . now()->format('d/m/Y H:i')
+            );
+
+            $paidApplication->save();
+
+            $this->syncWaterBodyForActivity(
+                $paidApplication,
+                $selectedActivity
+            );
+        }
+
+        /*
+         * Pindahkan hanya invois yang ditekan kepada
+         * application aktiviti yang telah dibayar.
+         */
+        $lockedInvoice->application_id =
+            $paidApplication->application_id;
+
+        $lockedInvoice->user_id =
+            $paidApplication->user_id;
+
+        $lockedInvoice->status = 'paid';
+        $lockedInvoice->save();
+
+        /*
+         * Cipta satu payment untuk satu invois.
+         */
+        $payment = LsankPayment::updateOrCreate(
+            [
+                'invoice_id' =>
+                    $lockedInvoice->invoice_id,
+            ],
+            [
+                'payment_method_id' => null,
+
+                'amount' =>
+                    (float) $lockedInvoice->total_amount,
+
+                'payment_status' =>
+                    'successful',
+
+                'payment_date' => now(),
+
+                'transaction_ref_no' =>
+                    'TEST-WATER-SINGLE-'
+                    . $paidApplication->application_id
+                    . '-'
+                    . $lockedInvoice->invoice_id
+                    . '-'
+                    . now()->format('YmdHis'),
+            ]
+        );
+
+        /*
+         * Jana satu nombor resit.
+         */
+        $receiptRunningNumber =
+            $this->nextReceiptRunningNumber();
+
+        $runningNo = str_pad(
+            (string) $receiptRunningNumber,
+            4,
+            '0',
+            STR_PAD_LEFT
+        );
+
+        $receiptNo =
+            'RESIT-'
+            . now()->format('Y')
+            . '-'
+            . $runningNo
+            . '-01';
+
+        $receipt = LsankReceipt::updateOrCreate(
+            [
+                'invoice_id' =>
+                    $lockedInvoice->invoice_id,
+            ],
+            [
+                'receipt_no' =>
+                    $receiptNo,
+
+                'payment_id' =>
+                    $payment->payment_id,
+
+                'receipt_date' =>
+                    now()->toDateString(),
+
+                'amount' =>
+                    (float) $lockedInvoice->total_amount,
+
+                'receipt_pdf_path' => null,
+
+                'status' => 'valid',
+            ]
+        );
+
+        /*
+         * Semak sama ada masih ada invois belum dibayar
+         * pada permohonan asal.
+         */
+        $remainingUnpaidInvoiceCount =
+            LsankInvoice::query()
+                ->where(
+                    'application_id',
+                    $lockedApplication->application_id
+                )
+                ->where('status', 'unpaid')
+                ->count();
+
+        return response()->json([
+            'success' => true,
+
+            'message' =>
+                $remainingUnpaidInvoiceCount > 0
+                    ? 'Bayaran satu invois berjaya. Masih terdapat invois aktiviti yang belum dibayar.'
+                    : 'Bayaran invois berjaya. Permohonan telah dihantar untuk semakan.',
+
+            'data' => [
+                'id' =>
+                    $paidApplication->application_id,
+
+                'application_id' =>
+                    $paidApplication->application_id,
+
+                'application_ids' => [
+                    $paidApplication->application_id,
+                ],
+
+                'application_no' =>
+                    $paidApplication->application_ref_no,
+
+                'application_ref_no' =>
+                    $paidApplication->application_ref_no,
+
+                'application_nos' => [
+                    $paidApplication->application_ref_no,
+                ],
+
+                'application_ref_nos' => [
+                    $paidApplication->application_ref_no,
+                ],
+
+                'activity_name' =>
+                    $selectedActivity,
+
+                'activity_names' => [
+                    $selectedActivity,
+                ],
+
+                'invoice_id' =>
+                    $lockedInvoice->invoice_id,
+
+                'invoice_ids' => [
+                    $lockedInvoice->invoice_id,
+                ],
+
+                'invoice_no' =>
+                    $lockedInvoice->invoice_no,
+
+                'invoice_nos' => [
+                    $lockedInvoice->invoice_no,
+                ],
+
+                'payment_id' =>
+                    $payment->payment_id,
+
+                'payment_ids' => [
+                    $payment->payment_id,
+                ],
+
+                'receipt_id' =>
+                    $receipt->receipt_id,
+
+                'receipt_ids' => [
+                    $receipt->receipt_id,
+                ],
+
+                'receipt_no' =>
+                    $receipt->receipt_no,
+
+                'receipt_nos' => [
+                    $receipt->receipt_no,
+                ],
+
+                'processing_fee' =>
+                    (float) $lockedInvoice->total_amount,
+
+                'processing_fee_display' =>
+                    'RM '
+                    . number_format(
+                        $lockedInvoice->total_amount,
+                        2
+                    ),
+
+                'amount' =>
+                    (float) $lockedInvoice->total_amount,
+
+                'split_batch_id' =>
+                    $splitBatchId,
+
+                'remaining_unpaid_invoice_count' =>
+                    $remainingUnpaidInvoiceCount,
+
+                'has_remaining_unpaid_invoice' =>
+                    $remainingUnpaidInvoiceCount > 0,
+
+                'status' =>
+                    LsankApplication::STATUS_DALAM_PROSES,
+
+                'status_display' =>
+                    'Dalam Proses',
+
+                'payment_status' =>
+                    LsankApplication::PAYMENT_SUDAH_BAYAR,
+
+                'payment_status_display' =>
+                    'Sudah Bayar',
+
+                'paid_at' =>
+                    now()->toDateTimeString(),
+            ],
+        ]);
+    });
+}
+
     public function payFinal(
         Request $request,
         LsankApplication $application,

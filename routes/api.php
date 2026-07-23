@@ -277,11 +277,17 @@ Route::middleware('auth:sanctum')->group(function () {
     */
 
     Route::prefix('licenses')->group(function () {
-        
+
         Route::get('/renewals/eligible', [
             RenewalController::class,
             'eligible',
         ])->name('licenses.renewals.eligible');
+
+        Route::post('/{licenseId}/renewals/start', [
+            RenewalController::class,
+            'start',
+        ])->whereNumber('licenseId')
+            ->name('licenses.renewals.start');
 
         Route::get('/', [
             LicenseController::class,

@@ -2,13 +2,22 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Api\Concerns\HandlesApplicationData;
 use App\Http\Controllers\Controller;
+use App\Models\LsankApplicant;
+use App\Models\LsankApplication;
+use App\Models\LsankCompany;
+use App\Models\LsankEffluentApplication;
 use App\Models\LsankLicense;
 use App\Models\LsankRenewalApplication;
+use App\Models\LsankWaterBodyApplication;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class RenewalController extends Controller
 {
+    use HandlesApplicationData;
     /**
      * Number of days before expiry when a user
      * is allowed to begin a renewal.
@@ -237,6 +246,327 @@ class RenewalController extends Controller
     }
 
     /**
+     * Start or resume a licence renewal.
+     */
+    public function start(
+        Request $request,
+        int $licenseId
+    ) {
+        $userId = (int) $request->user()->user_id;
+
+        return DB::transaction(function () use (
+            $licenseId,
+            $userId
+        ) {
+            /*
+         * Lock the licence while creating the renewal.
+         * This prevents two rapid button clicks from
+         * creating duplicate renewal records.
+         */
+            $license = LsankLicense::query()
+                ->with([
+                    'application.applicant.company',
+                    'application.waterBody',
+                    'application.effluent',
+                ])
+                ->lockForUpdate()
+                ->find($licenseId);
+
+            /*
+         * Do not reveal a licence belonging to another user.
+         */
+            if (
+                !$license
+                || !$license->application
+                || (int) $license->application->user_id !== $userId
+            ) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Lesen tidak dijumpai.',
+                ], 404);
+            }
+
+            /*
+         * If the user already started a renewal,
+         * return the same draft instead of creating
+         * another application.
+         */
+            $existingRenewal =
+                LsankRenewalApplication::query()
+                ->with('application')
+                ->where(
+                    'license_id',
+                    $license->license_id
+                )
+                ->whereNotIn(
+                    'renewal_status',
+                    [
+                        LsankRenewalApplication::STATUS_COMPLETED,
+                        LsankRenewalApplication::STATUS_REJECTED,
+                        LsankRenewalApplication::STATUS_CANCELLED,
+                    ]
+                )
+                ->lockForUpdate()
+                ->latest('renewal_id')
+                ->first();
+
+            if ($existingRenewal) {
+                $existingApplication =
+                    $existingRenewal->application;
+
+                if (
+                    !$existingApplication
+                    || (int) $existingApplication->user_id !== $userId
+                ) {
+                    return response()->json([
+                        'success' => false,
+                        'message' =>
+                        'Rekod pembaharuan tidak sah.',
+                    ], 409);
+                }
+
+                return $this->renewalStartResponse(
+                    renewal: $existingRenewal,
+                    application: $existingApplication,
+                    license: $license,
+                    resumed: true,
+                );
+            }
+
+            /*
+         * Perform the final eligibility check.
+         */
+            if (
+                !$license->canBeRenewedBy(
+                    $userId,
+                    self::RENEWAL_WINDOW_DAYS
+                )
+            ) {
+                return response()->json([
+                    'success' => false,
+                    'message' =>
+                    'Lesen ini belum layak untuk diperbaharui.',
+                ], 422);
+            }
+
+            $sourceApplication = $license->application;
+
+            /*
+         * Create a separate applicant record so editing
+         * the renewal does not modify historical data in
+         * the original approved application.
+         */
+            $newApplicant =
+                $this->createRenewalApplicant(
+                    $sourceApplication,
+                    $userId
+                );
+
+            $draftData =
+                $this->prepareRenewalDraftData(
+                    $sourceApplication,
+                    $license
+                );
+
+            $draftStatusId =
+                $this->applicationStatusId(
+                    'draft',
+                    'Draf',
+                    1
+                );
+
+            /*
+         * Create a new application using data from the
+         * original approved application.
+         */
+            $newApplication = LsankApplication::create([
+                'application_ref_no' =>
+                $this->generateRenewalDraftReferenceNo(
+                    $userId
+                ),
+
+                'user_id' => $userId,
+
+                'applicant_id' =>
+                $newApplicant->applicant_id,
+
+                'application_type_id' =>
+                $sourceApplication->application_type_id,
+
+                'application_status_id' =>
+                $draftStatusId,
+
+                'application_category' =>
+                'renewal',
+
+                'application_status' =>
+                LsankApplication::STATUS_DRAF,
+
+                'payment_status' =>
+                LsankApplication::PAYMENT_BELUM_BAYAR,
+
+                'current_step' => 0,
+
+                'submitted_at' => null,
+                'review_data' => null,
+                'submitted_data' => null,
+
+                'remarks' =>
+                'Draf pembaharuan bagi lesen ' .
+                    $license->license_no . '.',
+
+                'draft_data' => $draftData,
+
+                /*
+             * Main application information.
+             */
+                'applicant_name' =>
+                $sourceApplication->applicant_name,
+
+                'business_name' =>
+                $sourceApplication->business_name,
+
+                'phone' =>
+                $sourceApplication->phone,
+
+                'email' =>
+                $sourceApplication->email,
+
+                'license_type' =>
+                $sourceApplication->license_type,
+
+                'activity_type' =>
+                $sourceApplication->activity_type,
+
+                'application_type' =>
+                $sourceApplication->application_type,
+
+                'activity_name' =>
+                $sourceApplication->activity_name,
+
+                'district' =>
+                $sourceApplication->district,
+
+                'activity_location' =>
+                $sourceApplication->activity_location,
+
+                'longitude' =>
+                $sourceApplication->longitude,
+
+                'latitude' =>
+                $sourceApplication->latitude,
+
+                'activity_details' =>
+                $sourceApplication->activity_details,
+
+                /*
+             * Applicant information.
+             */
+                'applicant_type' =>
+                $sourceApplication->applicant_type,
+
+                'identity_no' =>
+                $sourceApplication->identity_no,
+
+                'phone_no' =>
+                $sourceApplication->phone_no,
+
+                'address' =>
+                $sourceApplication->address,
+
+                /*
+             * Company information.
+             */
+                'company_name' =>
+                $sourceApplication->company_name,
+
+                'registration_no' =>
+                $sourceApplication->registration_no,
+
+                'business_address' =>
+                $sourceApplication->business_address,
+
+                'business_phone' =>
+                $sourceApplication->business_phone,
+
+                'business_email' =>
+                $sourceApplication->business_email,
+
+                'responsible_officer_name' =>
+                $sourceApplication
+                    ->responsible_officer_name,
+
+                'responsible_officer_phone' =>
+                $sourceApplication
+                    ->responsible_officer_phone,
+
+                'responsible_officer_position' =>
+                $sourceApplication
+                    ->responsible_officer_position,
+
+                'officers' =>
+                $sourceApplication->officers ?? [],
+
+                /*
+             * Activity-specific information.
+             */
+                'activity_type_id' =>
+                $sourceApplication->activity_type_id,
+
+                'operating_days' =>
+                $sourceApplication->operating_days,
+
+                'operating_time' =>
+                $sourceApplication->operating_time,
+
+                'recreation_details' =>
+                $sourceApplication
+                    ->recreation_details ?? [],
+
+                'construction_shape' =>
+                $sourceApplication->construction_shape,
+            ]);
+
+            /*
+         * Copy the related Water or Effluent record.
+         */
+            $this->copyActivityRecord(
+                $sourceApplication,
+                $newApplication
+            );
+
+            /*
+         * Connect the old licence with the new
+         * renewal application.
+         */
+            $renewal =
+                LsankRenewalApplication::create([
+                    'application_id' =>
+                    $newApplication->application_id,
+
+                    'license_id' =>
+                    $license->license_id,
+
+                    'old_expiry_date' =>
+                    $license->expiry_date,
+
+                    'new_expiry_date' =>
+                    null,
+
+                    'renewal_status' =>
+                    LsankRenewalApplication::STATUS_DRAFT,
+                ]);
+
+            return $this->renewalStartResponse(
+                renewal: $renewal,
+                application: $newApplication,
+                license: $license,
+                resumed: false,
+            );
+        });
+    }
+
+    /**
      * Prepare one licence for the Flutter renewal list.
      */
     private function formatEligibleLicense(
@@ -312,5 +642,422 @@ class RenewalController extends Controller
 
             'can_renew' => true,
         ];
+    }
+    /**
+     * Create a separate applicant for the renewal draft.
+     */
+    private function createRenewalApplicant(
+        LsankApplication $sourceApplication,
+        int $userId
+    ): LsankApplicant {
+        $sourceApplicant =
+            $sourceApplication->applicant;
+
+        $newApplicant = LsankApplicant::create([
+            'user_id' => $userId,
+
+            'applicant_type' =>
+            $sourceApplicant?->applicant_type
+                ?? $this->normalizeApplicantType(
+                    $sourceApplication->applicant_type
+                ),
+
+            'applicant_name' =>
+            $sourceApplicant?->applicant_name
+                ?? $sourceApplication->applicant_name
+                ?? '-',
+
+            'identity_no' =>
+            $sourceApplicant?->identity_no
+                ?? $sourceApplication->identity_no,
+
+            'email' =>
+            $sourceApplicant?->email
+                ?? $sourceApplication->email,
+
+            'phone_no' =>
+            $sourceApplicant?->phone_no
+                ?? $sourceApplication->phone_no
+                ?? $sourceApplication->phone,
+
+            'address' =>
+            $sourceApplicant?->address
+                ?? $sourceApplication->address,
+
+            'status' => 'active',
+        ]);
+
+        $sourceCompany =
+            $sourceApplicant?->company;
+
+        $companyName = trim(
+            (string) (
+                $sourceCompany?->company_name
+                ?? $sourceApplication->company_name
+                ?? $sourceApplication->business_name
+                ?? ''
+            )
+        );
+
+        if ($companyName !== '') {
+            LsankCompany::create([
+                'applicant_id' =>
+                $newApplicant->applicant_id,
+
+                'company_name' =>
+                $companyName,
+
+                'registration_no' =>
+                $sourceCompany?->registration_no
+                    ?? $sourceApplication->registration_no,
+
+                'business_address' =>
+                $sourceCompany?->business_address
+                    ?? $sourceApplication->business_address,
+
+                'business_phone' =>
+                $sourceCompany?->business_phone
+                    ?? $sourceApplication->business_phone,
+
+                'business_email' =>
+                $sourceCompany?->business_email
+                    ?? $sourceApplication->business_email,
+
+                'responsible_officer_name' =>
+                $sourceCompany?->responsible_officer_name
+                    ?? $sourceApplication
+                    ->responsible_officer_name,
+
+                'responsible_officer_phone' =>
+                $sourceCompany?->responsible_officer_phone
+                    ?? $sourceApplication
+                    ->responsible_officer_phone,
+            ]);
+        }
+
+        return $newApplicant;
+    }
+
+    /**
+     * Copy previous form information into the new draft.
+     *
+     * Payment, review, submission and document upload
+     * states are intentionally reset.
+     */
+    private function prepareRenewalDraftData(
+        LsankApplication $sourceApplication,
+        LsankLicense $license
+    ): array {
+        $draftData = is_array(
+            $sourceApplication->draft_data
+        )
+            ? $sourceApplication->draft_data
+            : [];
+
+        $activityName = trim(
+            (string) (
+                $license->activity_name
+                ?: $sourceApplication->activity_name
+                ?: $sourceApplication->activity_details
+            )
+        );
+
+        $selectedActivities =
+            $activityName !== ''
+            ? [$activityName]
+            : [];
+
+        /*
+     * Reset form progress while retaining the
+     * previously entered values.
+     */
+        $draftData['step'] = 0;
+        $draftData['current_step'] = 0;
+        $draftData['completed_steps'] = [];
+        $draftData['agree_terms'] = false;
+
+        /*
+     * Do not treat the renewal as part of the old
+     * split application batch.
+     */
+        unset(
+            $draftData['split_batch_id'],
+            $draftData['split_from_application_id'],
+            $draftData['is_split_parent'],
+            $draftData['is_split_child']
+        );
+
+        $draftData['selected_activities'] =
+            $selectedActivities;
+
+        $draftData['original_selected_activities'] =
+            $selectedActivities;
+
+        $draftData['processing_invoice_activities'] =
+            $selectedActivities;
+
+        /*
+     * Old uploaded documents are not copied to the
+     * new application record.
+     */
+        $draftData['uploaded_documents'] = [];
+
+        $documents = is_array(
+            $draftData['documents'] ?? null
+        )
+            ? $draftData['documents']
+            : [];
+
+        $documents['uploaded_keys'] = [];
+
+        $draftData['documents'] = $documents;
+
+        /*
+     * Store renewal metadata inside the draft.
+     */
+        $draftData['is_renewal'] = true;
+
+        $draftData['renewal_license_id'] =
+            (int) $license->license_id;
+
+        $draftData['renewal_license_no'] =
+            (string) $license->license_no;
+
+        $draftData['original_application_id'] =
+            (int) $sourceApplication->application_id;
+
+        $meta = is_array(
+            $draftData['meta'] ?? null
+        )
+            ? $draftData['meta']
+            : [];
+
+        $meta['step'] = 0;
+        $meta['current_step'] = 0;
+        $meta['is_renewal'] = true;
+
+        $meta['renewal_license_id'] =
+            (int) $license->license_id;
+
+        $meta['renewal_license_no'] =
+            (string) $license->license_no;
+
+        $meta['original_application_id'] =
+            (int) $sourceApplication->application_id;
+
+        $draftData['meta'] = $meta;
+
+        return $draftData;
+    }
+
+    /**
+     * Copy the Water or Effluent child record.
+     */
+    private function copyActivityRecord(
+        LsankApplication $sourceApplication,
+        LsankApplication $newApplication
+    ): void {
+        if (
+            $sourceApplication->isEffluentApplication()
+            && $sourceApplication->effluent
+        ) {
+            $source = $sourceApplication->effluent;
+
+            LsankEffluentApplication::create([
+                'application_id' =>
+                $newApplication->application_id,
+
+                'service_type_id' =>
+                $source->service_type_id,
+
+                'activity_location' =>
+                $source->activity_location,
+
+                'longitude' =>
+                $source->longitude,
+
+                'latitude' =>
+                $source->latitude,
+
+                'composition' =>
+                $source->composition,
+
+                'frequency' =>
+                $source->frequency,
+
+                'flow_rate' =>
+                $source->flow_rate,
+
+                'sampling_method' =>
+                $source->sampling_method,
+
+                'contingency_plan' =>
+                $source->contingency_plan,
+
+                'disposal_method' =>
+                $source->disposal_method,
+            ]);
+
+            return;
+        }
+
+        if (
+            $sourceApplication->isWaterApplication()
+            && $sourceApplication->waterBody
+        ) {
+            $source = $sourceApplication->waterBody;
+
+            LsankWaterBodyApplication::create([
+                'application_id' =>
+                $newApplication->application_id,
+
+                'activity_type_id' =>
+                $source->activity_type_id,
+
+                'activity_location' =>
+                $source->activity_location,
+
+                'longitude' =>
+                $source->longitude,
+
+                'latitude' =>
+                $source->latitude,
+
+                'operating_days' =>
+                $source->operating_days,
+
+                'operating_time' =>
+                $source->operating_time,
+
+                'motorized_fee' =>
+                $source->motorized_fee,
+
+                'non_motorized_fee' =>
+                $source->non_motorized_fee,
+
+                'activity_details' =>
+                $source->activity_details,
+
+                'draft_data' =>
+                $source->draft_data,
+            ]);
+        }
+    }
+
+    /**
+     * Generate a unique temporary reference number.
+     */
+    private function generateRenewalDraftReferenceNo(
+        int $userId
+    ): string {
+        do {
+            $referenceNo =
+                'DRAF-RNW-' .
+                $userId . '-' .
+                now()->format('YmdHis') . '-' .
+                Str::upper(Str::random(4));
+        } while (
+            LsankApplication::where(
+                'application_ref_no',
+                $referenceNo
+            )->exists()
+        );
+
+        return $referenceNo;
+    }
+
+    /**
+     * Return navigation information to Flutter.
+     */
+    private function renewalStartResponse(
+        LsankRenewalApplication $renewal,
+        LsankApplication $application,
+        LsankLicense $license,
+        bool $resumed
+    ) {
+        $applicationType =
+            $application->isEffluentApplication()
+            ? 'effluent'
+            : 'water';
+
+        $path =
+            $applicationType === 'effluent'
+            ? '/applications/effluent/form'
+            : '/applications/water/form';
+
+        return response()->json([
+            'success' => true,
+
+            'message' =>
+            $resumed
+                ? 'Draf pembaharuan sedia ada diteruskan.'
+                : 'Draf pembaharuan berjaya dicipta.',
+
+            'resumed' => $resumed,
+
+            'data' => [
+                'renewal_id' =>
+                (int) $renewal->renewal_id,
+
+                'renewal_status' =>
+                (string) $renewal->renewal_status,
+
+                'license_id' =>
+                (int) $license->license_id,
+
+                'license_no' =>
+                (string) $license->license_no,
+
+                'old_application_id' =>
+                (int) $license->application_id,
+
+                'application_id' =>
+                (int) $application->application_id,
+
+                'application_ref_no' =>
+                (string) $application
+                    ->application_ref_no,
+
+                'application_category' =>
+                (string) $application
+                    ->application_category,
+
+                'application_type' =>
+                $applicationType,
+
+                'selected_activities' =>
+                data_get(
+                    $application->draft_data,
+                    'selected_activities',
+                    []
+                ),
+            ],
+
+            'navigation' => [
+                'path' => $path,
+
+                'query' => [
+                    'applicationId' =>
+                    (string) $application
+                        ->application_id,
+
+                    'resumeDraft' => 'true',
+
+                    'applicantType' =>
+                    (string) (
+                        $application->applicant_type
+                        ?: 'Individu'
+                    ),
+
+                    'renewalId' =>
+                    (string) $renewal->renewal_id,
+
+                    'licenseId' =>
+                    (string) $license->license_id,
+
+                    'isRenewal' => 'true',
+                ],
+            ],
+        ]);
     }
 }

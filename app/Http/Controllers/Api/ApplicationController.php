@@ -326,6 +326,149 @@ class ApplicationController extends Controller
         ]);
     }
 
+    public function requestSecurityRefund(
+        Request $request,
+        LsankInvoice $invoice
+    ) {
+        if ((int) $invoice->user_id !== (int) $request->user()->user_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Anda tidak dibenarkan mengakses invois ini.',
+            ], 403);
+        }
+
+        if (
+            strtolower(trim((string) $invoice->payment_type))
+            !== strtolower('Wang Sekuriti')
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invois ini bukan invois wang sekuriti.',
+            ], 422);
+        }
+
+        if (strtolower(trim((string) $invoice->status)) !== 'paid') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Wang sekuriti mesti dibayar sebelum refund dimohon.',
+            ], 422);
+        }
+
+        if ($invoice->security_refund_status === 'refunded') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Wang sekuriti telah dipulangkan.',
+            ], 422);
+        }
+
+        if ($invoice->security_refund_status === 'pending') {
+            return response()->json([
+                'success' => true,
+                'message' => 'Permohonan refund sedang diproses.',
+                'data' => $invoice,
+            ]);
+        }
+
+        $invoice->security_refund_status = 'pending';
+        $invoice->security_refund_requested_at = now();
+        $invoice->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Permohonan refund wang sekuriti berjaya dihantar.',
+            'data' => [
+                'invoice_id' => $invoice->invoice_id,
+                'security_refund_status' =>
+                $invoice->security_refund_status,
+                'security_refund_requested_at' =>
+                optional(
+                    $invoice->security_refund_requested_at
+                )?->toDateTimeString(),
+            ],
+        ]);
+    }
+
+    public function updateSecurityRefundStatus(
+        Request $request,
+        LsankInvoice $invoice
+    ) {
+        $validated = $request->validate([
+            'security_refund_status' => [
+                'required',
+                'string',
+                'in:pending,refunded',
+            ],
+            'security_refund_note' => [
+                'nullable',
+                'string',
+                'max:2000',
+            ],
+        ]);
+
+        if (
+            strtolower(trim((string) $invoice->payment_type))
+            !== strtolower('Wang Sekuriti')
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invois ini bukan invois wang sekuriti.',
+            ], 422);
+        }
+
+        if (
+            $validated['security_refund_status'] === 'refunded' &&
+            $invoice->security_refund_status !== 'pending'
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'User belum membuat permohonan refund sekuriti.',
+            ], 422);
+        }
+
+        $invoice->security_refund_status =
+            $validated['security_refund_status'];
+
+        $invoice->security_refund_note =
+            $validated['security_refund_note'] ?? null;
+
+        if ($validated['security_refund_status'] === 'refunded') {
+            $invoice->security_refunded_at = now();
+            $invoice->security_refunded_by =
+                $request->user()->user_id;
+        } else {
+            $invoice->security_refunded_at = null;
+            $invoice->security_refunded_by = null;
+        }
+
+        $invoice->save();
+
+        return response()->json([
+            'success' => true,
+            'message' =>
+            $invoice->security_refund_status === 'refunded'
+                ? 'Wang sekuriti ditandakan telah dipulangkan.'
+                : 'Status refund wang sekuriti dikemas kini.',
+            'data' => [
+                'invoice_id' => $invoice->invoice_id,
+                'security_refund_status' =>
+                $invoice->security_refund_status,
+                'security_refund_requested_at' =>
+                optional(
+                    $invoice->security_refund_requested_at
+                )?->toDateTimeString(),
+                'security_refunded_at' =>
+                optional(
+                    $invoice->security_refunded_at
+                )?->toDateTimeString(),
+                'security_refunded_by' =>
+                $invoice->security_refunded_by,
+                'security_refund_note' =>
+                $invoice->security_refund_note,
+            ],
+        ]);
+    }
+
     public function review(
         Request $request,
         $id,

@@ -219,6 +219,17 @@ Route::middleware('auth:sanctum')->group(function () {
 
     /*
     |--------------------------------------------------------------------------
+    | User Side - Security Refund
+    |--------------------------------------------------------------------------
+    */
+
+    Route::post('/invoices/{invoice}/security-refund/request', [
+        ApplicationController::class,
+        'requestSecurityRefund',
+    ])->whereNumber('invoice');
+
+    /*
+    |--------------------------------------------------------------------------
     | Admin Side - Applications
     |--------------------------------------------------------------------------
     |
@@ -269,6 +280,20 @@ Route::middleware('auth:sanctum')->group(function () {
         ApplicationController::class,
         'review',
     ]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Admin Side - Security Refund
+    |--------------------------------------------------------------------------
+    */
+
+    Route::patch(
+        '/admin/invoices/{invoice}/security-refund-status',
+        [
+            ApplicationController::class,
+            'updateSecurityRefundStatus',
+        ],
+    )->whereNumber('invoice');
 
     /*
     |--------------------------------------------------------------------------

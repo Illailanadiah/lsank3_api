@@ -127,11 +127,16 @@ Route::middleware('auth:sanctum')->group(function () {
             'payInvoice',
         ])->whereNumber('application')
             ->whereNumber('invoice');
-        
-        Route::post('/{application}/pay-final', [
-            WaterApplicationController::class,
-            'payFinal',
-        ]);
+
+        Route::post(
+            '/{application}/final-invoices/{invoice}/pay',
+            [
+                WaterApplicationController::class,
+                'payFinalInvoice',
+            ]
+        )
+            ->whereNumber('application')
+            ->whereNumber('invoice');
 
         Route::delete('/{application}/draft', [
             WaterApplicationController::class,

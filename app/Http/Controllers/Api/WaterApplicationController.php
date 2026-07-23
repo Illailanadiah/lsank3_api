@@ -736,21 +736,111 @@ class WaterApplicationController extends Controller
     {
         $this->guardOwnedWaterApplication($request, $application);
 
-        $invoice = LsankInvoice::query()
+        if ($application->application_status !== LsankApplication::STATUS_FI_PEMPROSESAN) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Permohonan ini belum berada di peringkat Fi Pemprosesan.',
+            ], 422);
+        }
+
+        $unpaidInvoiceIds = LsankInvoice::query()
             ->where('application_id', $application->application_id)
             ->where('payment_type', self::PROCESSING_PAYMENT_TYPE)
             ->where('status', 'unpaid')
             ->orderBy('invoice_id')
-            ->first();
+            ->pluck('invoice_id')
+            ->values()
+            ->all();
 
-        if (!$invoice) {
+        if (empty($unpaidInvoiceIds)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Tiada invois Fi Pemprosesan yang belum dibayar.',
             ], 422);
         }
 
-        return $this->payInvoice($request, $application, $invoice);
+        $paidInvoices = [];
+        $paidReceipts = [];
+        $paidApplications = [];
+        $totalPaid = 0.0;
+        $lastResponseData = [];
+
+        foreach ($unpaidInvoiceIds as $invoiceId) {
+            $freshApplication = LsankApplication::query()
+                ->where('application_id', $application->application_id)
+                ->firstOrFail();
+
+            $invoice = LsankInvoice::query()
+                ->where('invoice_id', $invoiceId)
+                ->firstOrFail();
+
+            $response = $this->payInvoice(
+                $request,
+                $freshApplication,
+                $invoice
+            );
+
+            $payload = $response->getData(true);
+
+            if ($response->getStatusCode() >= 400 || !($payload['success'] ?? false)) {
+                return $response;
+            }
+
+            $data = is_array($payload['data'] ?? null)
+                ? $payload['data']
+                : [];
+
+            $lastResponseData = $data;
+            $totalPaid += (float) ($data['amount'] ?? $data['total_amount'] ?? 0);
+
+            if (!empty($data['invoice_id'])) {
+                $paidInvoices[] = [
+                    'invoice_id' => $data['invoice_id'],
+                    'invoice_no' => $data['invoice_no'] ?? null,
+                    'activity_name' => $data['activity_name'] ?? null,
+                    'amount' => (float) ($data['amount'] ?? 0),
+                ];
+            }
+
+            if (!empty($data['receipt_id'])) {
+                $paidReceipts[] = [
+                    'receipt_id' => $data['receipt_id'],
+                    'receipt_no' => $data['receipt_no'] ?? null,
+                ];
+            }
+
+            if (!empty($data['application_id'])) {
+                $paidApplications[] = [
+                    'application_id' => $data['application_id'],
+                    'application_ref_no' => $data['application_ref_no'] ?? null,
+                    'activity_name' => $data['activity_name'] ?? null,
+                ];
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => count($paidInvoices) > 1
+                ? 'Semua invois Fi Pemprosesan berjaya dibayar.'
+                : 'Invois Fi Pemprosesan berjaya dibayar.',
+            'data' => array_merge($lastResponseData, [
+                'paid_all' => true,
+                'paid_invoice_count' => count($paidInvoices),
+                'invoice_ids' => array_values(array_filter(array_column($paidInvoices, 'invoice_id'))),
+                'invoice_nos' => array_values(array_filter(array_column($paidInvoices, 'invoice_no'))),
+                'receipt_ids' => array_values(array_filter(array_column($paidReceipts, 'receipt_id'))),
+                'receipt_nos' => array_values(array_filter(array_column($paidReceipts, 'receipt_no'))),
+                'application_ids' => array_values(array_filter(array_column($paidApplications, 'application_id'))),
+                'application_ref_nos' => array_values(array_filter(array_column($paidApplications, 'application_ref_no'))),
+                'paid_invoices' => $paidInvoices,
+                'paid_receipts' => $paidReceipts,
+                'paid_applications' => $paidApplications,
+                'total_paid' => $totalPaid,
+                'total_paid_display' => 'RM ' . number_format($totalPaid, 2),
+                'remaining_unpaid_invoice_count' => 0,
+                'has_remaining_unpaid_invoice' => false,
+            ]),
+        ]);
     }
 
     private function saveApplicationRecord(Request $request, bool $allowExisting)
@@ -1344,7 +1434,9 @@ class WaterApplicationController extends Controller
             : [];
         $draftData = array_replace_recursive($existing, $incoming);
 
-        $selectedActivities = $draftData['selected_activities']
+        $selectedActivities = $draftData['original_selected_activities']
+            ?? $draftData['processing_invoice_activities']
+            ?? $draftData['selected_activities']
             ?? ($draftData['meta']['selected_activities'] ?? null)
             ?? $this->normalizeStringList($validated['activity_details'] ?? null);
 
@@ -1373,6 +1465,14 @@ class WaterApplicationController extends Controller
         );
 
         $draftData['selected_activities'] = $selectedActivities;
+
+        if (!isset($draftData['original_selected_activities']) || !is_array($draftData['original_selected_activities'])) {
+            $draftData['original_selected_activities'] = $selectedActivities;
+        }
+
+        if (!isset($draftData['processing_invoice_activities']) || !is_array($draftData['processing_invoice_activities'])) {
+            $draftData['processing_invoice_activities'] = $selectedActivities;
+        }
         $draftData['recreation_details'] = is_array($draftData['recreation_details'] ?? null)
             ? $draftData['recreation_details']
             : ($validated['recreation_details'] ?? []);

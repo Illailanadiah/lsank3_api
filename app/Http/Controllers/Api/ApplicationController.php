@@ -337,10 +337,7 @@ class ApplicationController extends Controller
             ], 403);
         }
 
-        if (
-            strtolower(trim((string) $invoice->payment_type))
-            !== strtolower('Wang Sekuriti')
-        ) {
+        if (!$this->isSecurityInvoice($invoice)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Invois ini bukan invois wang sekuriti.',
@@ -364,8 +361,29 @@ class ApplicationController extends Controller
         if ($invoice->security_refund_status === 'pending') {
             return response()->json([
                 'success' => true,
-                'message' => 'Permohonan refund sedang diproses.',
-                'data' => $invoice,
+                'message' =>
+                'Permohonan refund sedang diproses.',
+
+                'data' => [
+                    'invoice_id' =>
+                    $invoice->invoice_id,
+
+                    'security_refund_status' =>
+                    $invoice->security_refund_status,
+
+                    'security_refund_requested_at' =>
+                    optional(
+                        $invoice->security_refund_requested_at
+                    )?->toDateTimeString(),
+
+                    'security_refunded_at' =>
+                    optional(
+                        $invoice->security_refunded_at
+                    )?->toDateTimeString(),
+
+                    'security_refund_note' =>
+                    $invoice->security_refund_note,
+                ],
             ]);
         }
 
@@ -405,10 +423,7 @@ class ApplicationController extends Controller
             ],
         ]);
 
-        if (
-            strtolower(trim((string) $invoice->payment_type))
-            !== strtolower('Wang Sekuriti')
-        ) {
+        if (!$this->isSecurityInvoice($invoice)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Invois ini bukan invois wang sekuriti.',
@@ -953,20 +968,56 @@ class ApplicationController extends Controller
                     'application_ref_no' => $applicationRefNo,
                     'application_no' => $applicationRefNo,
                     'file_no' => $applicationRefNo,
+
                     'payment_type' => $invoice->payment_type
                         ?? 'Fi Pemprosesan',
+
                     'amount' => $amount,
-                    'amount_display' => 'RM ' . number_format($amount, 2),
+
+                    'amount_display' =>
+                    'RM ' . number_format($amount, 2),
+
                     'invoice_date' => optional(
                         $invoice->invoice_date
                     )->format('d/m/Y') ?? '-',
+
                     'due_date' => optional(
                         $invoice->due_date
                     )->format('d/m/Y') ?? '-',
+
                     'status' => $invoice->status,
+
                     'paid' => strtolower(
                         trim((string) $invoice->status)
                     ) === 'paid',
+
+                    /*
+                    * Refund Wang Sekuriti
+                    *
+                    * not_requested = user belum mohon
+                    * pending       = user telah mohon
+                    * refunded      = wang telah dipulangkan
+                    */
+                    'security_refund_status' =>
+                    $invoice->security_refund_status
+                        ?? 'not_requested',
+
+                    'security_refund_requested_at' =>
+                    optional(
+                        $invoice->security_refund_requested_at
+                    )?->toDateTimeString(),
+
+                    'security_refunded_at' =>
+                    optional(
+                        $invoice->security_refunded_at
+                    )?->toDateTimeString(),
+
+                    'security_refunded_by' =>
+                    $invoice->security_refunded_by,
+
+                    'security_refund_note' =>
+                    $invoice->security_refund_note,
+
                     'activity_name' => $activityName,
                     'activity_details' => $activityName,
                 ];
@@ -1111,21 +1162,48 @@ class ApplicationController extends Controller
                                 'invoice_no' => $invoice->invoice_no,
                                 'application_id' => $invoice->application_id,
                                 'application_ref_no' => $applicationRefNo,
+
                                 'payment_type' => $invoice->payment_type
                                     ?? 'Fi Pemprosesan',
+
                                 'total_amount' => (float) (
                                     $invoice->total_amount
                                     ?? 0
                                 ),
+
                                 'status' => $invoice->status,
+
+                                'security_refund_status' =>
+                                $invoice->security_refund_status
+                                    ?? 'not_requested',
+
+                                'security_refund_requested_at' =>
+                                optional(
+                                    $invoice->security_refund_requested_at
+                                )?->toDateTimeString(),
+
+                                'security_refunded_at' =>
+                                optional(
+                                    $invoice->security_refunded_at
+                                )?->toDateTimeString(),
+
+                                'security_refunded_by' =>
+                                $invoice->security_refunded_by,
+
+                                'security_refund_note' =>
+                                $invoice->security_refund_note,
+
                                 'application' => $invoiceApplication
                                     ? [
                                         'application_id' =>
                                         $invoiceApplication->application_id,
+
                                         'application_ref_no' =>
                                         $invoiceApplication->application_ref_no,
+
                                         'activity_name' =>
                                         $invoiceApplication->activity_name,
+
                                         'activity_details' =>
                                         $invoiceApplication->activity_details,
                                     ]
@@ -1411,7 +1489,7 @@ class ApplicationController extends Controller
         $reviewData['invoice_fee_lesen'] = $licenseFee;
         $reviewData['license_duration_year'] = $licenseDurationYear;
         $reviewData['is_one_off'] = $isOneOff;
-        
+
         $feeItems = [
             [
                 'payment_type' => 'Fi Lesen',
@@ -1503,6 +1581,11 @@ class ApplicationController extends Controller
                     $feeItem['amount'],
 
                     'status' => 'unpaid',
+
+                    'security_refund_status' =>
+                    $feeItem['payment_type'] === 'Wang Sekuriti'
+                        ? 'not_requested'
+                        : null,
                 ]);
             } elseif ($invoice->status !== 'paid') {
                 /*
@@ -1547,6 +1630,19 @@ class ApplicationController extends Controller
         $application->save();
 
         return $createdInvoices;
+    }
+
+    private function isSecurityInvoice(
+        LsankInvoice $invoice
+    ): bool {
+        $paymentType = strtolower(
+            trim((string) $invoice->payment_type)
+        );
+
+        return str_contains(
+            $paymentType,
+            'sekuriti'
+        );
     }
 
     private function moneyValue(mixed $value): float

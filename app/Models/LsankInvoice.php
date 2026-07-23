@@ -3,10 +3,13 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class LsankInvoice extends Model
 {
     protected $table = 'lsank_invoices';
+
     protected $primaryKey = 'invoice_id';
 
     protected $fillable = [
@@ -24,7 +27,6 @@ class LsankInvoice extends Model
         'security_refunded_at',
         'security_refunded_by',
         'security_refund_note',
-
     ];
 
     protected $casts = [
@@ -35,7 +37,7 @@ class LsankInvoice extends Model
         'security_refunded_at' => 'datetime',
     ];
 
-    public function application()
+    public function application(): BelongsTo
     {
         return $this->belongsTo(
             LsankApplication::class,
@@ -44,7 +46,7 @@ class LsankInvoice extends Model
         );
     }
 
-    public function payment()
+    public function payment(): HasOne
     {
         return $this->hasOne(
             LsankPayment::class,
@@ -53,7 +55,7 @@ class LsankInvoice extends Model
         );
     }
 
-    public function receipt()
+    public function receipt(): HasOne
     {
         return $this->hasOne(
             LsankReceipt::class,

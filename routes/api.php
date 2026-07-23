@@ -314,6 +314,12 @@ Route::middleware('auth:sanctum')->group(function () {
         ])->whereNumber('licenseId')
             ->name('licenses.renewals.start');
 
+        Route::post('/{license}/termination-request', [
+            LicenseController::class,
+            'requestTermination',
+        ])->whereNumber('license')
+            ->name('licenses.termination-request');
+
         Route::get('/', [
             LicenseController::class,
             'index',

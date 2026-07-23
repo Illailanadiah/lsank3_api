@@ -73,6 +73,134 @@ class LsankLicense extends Model
             'license_status_id'
         );
     }
+    /**
+     * All renewal attempts made for this licence.
+     */
+    public function renewals()
+    {
+        return $this->hasMany(
+            LsankRenewalApplication::class,
+            'license_id',
+            'license_id'
+        );
+    }
+    /**
+     * Return the number of days before the licence expires.
+     *
+     * Positive: licence is still active.
+     * Zero: licence expires today.
+     * Negative: licence has expired.
+     */
+    public function getDaysUntilExpiryAttribute(): ?int
+    {
+        if ($this->expiry_date === null) {
+            return null;
+        }
+
+        return (int) now()
+            ->startOfDay()
+            ->diffInDays(
+                $this->expiry_date->copy()->startOfDay(),
+                false
+            );
+    }
+
+    /**
+     * Check whether the licence will expire within
+     * the permitted renewal period.
+     */
+    public function isWithinRenewalWindow(
+        int $renewalWindowDays = 60
+    ): bool {
+        $daysUntilExpiry = $this->days_until_expiry;
+
+        if ($daysUntilExpiry === null) {
+            return false;
+        }
+
+        return $daysUntilExpiry >= 0
+            && $daysUntilExpiry <= $renewalWindowDays;
+    }
+
+    /**
+     * Check whether this licence already has an
+     * unfinished renewal application.
+     */
+    public function hasOpenRenewal(): bool
+    {
+        return $this->renewals()
+            ->whereNotIn('renewal_status', [
+                LsankRenewalApplication::STATUS_COMPLETED,
+                LsankRenewalApplication::STATUS_REJECTED,
+                LsankRenewalApplication::STATUS_CANCELLED,
+            ])
+            ->exists();
+    }
+
+    /**
+     * Check whether the licence belongs to a user.
+     *
+     * Ownership is obtained through:
+     * licence -> original application -> user_id
+     */
+    public function belongsToUser(int $userId): bool
+    {
+        if ($this->relationLoaded('application')) {
+            return (int) $this->application?->user_id === $userId;
+        }
+
+        return $this->application()
+            ->where('user_id', $userId)
+            ->exists();
+    }
+
+    /**
+     * Final check before a user can start a renewal.
+     */
+    public function canBeRenewedBy(
+        int $userId,
+        int $renewalWindowDays = 60
+    ): bool {
+        /*
+     * The original application must exist and
+     * belong to the logged-in user.
+     */
+        if (!$this->belongsToUser($userId)) {
+            return false;
+        }
+
+        /*
+     * A licence without an expiry date cannot
+     * be processed automatically.
+     */
+        if ($this->expiry_date === null) {
+            return false;
+        }
+
+        /*
+     * A licence is eligible when:
+     * 1. It has already expired; or
+     * 2. It will expire within the next 60 days.
+     */
+        $eligibleByDate = $this->is_expired
+            || $this->isWithinRenewalWindow(
+                $renewalWindowDays
+            );
+
+        if (!$eligibleByDate) {
+            return false;
+        }
+
+        /*
+     * Do not create a second renewal while another
+     * renewal for this licence is still open.
+     */
+        if ($this->hasOpenRenewal()) {
+            return false;
+        }
+
+        return true;
+    }
 
     public function getIsExpiredAttribute(): bool
     {

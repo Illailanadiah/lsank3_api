@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\WaterApplicationController;
 use App\Http\Controllers\Api\EffluentApplicationController;
 use App\Http\Controllers\Api\ApplicationController;
 use App\Http\Controllers\Api\LicenseController;
+use App\Http\Controllers\Api\RenewalController;
 
 /*
 |--------------------------------------------------------------------------
@@ -276,6 +277,12 @@ Route::middleware('auth:sanctum')->group(function () {
     */
 
     Route::prefix('licenses')->group(function () {
+        
+        Route::get('/renewals/eligible', [
+            RenewalController::class,
+            'eligible',
+        ])->name('licenses.renewals.eligible');
+
         Route::get('/', [
             LicenseController::class,
             'index',

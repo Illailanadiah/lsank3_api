@@ -46,7 +46,7 @@ class WaterApplicationController extends Controller
             ->where('application_type_id', $typeId)
             ->latest('application_id')
             ->get()
-            ->map(fn (LsankApplication $application) => $this->formatWaterListItem($application))
+            ->map(fn(LsankApplication $application) => $this->formatWaterListItem($application))
             ->values();
 
         return response()->json([
@@ -87,9 +87,9 @@ class WaterApplicationController extends Controller
 
             $splitBatchId = $draftData['split_batch_id']
                 ?? 'WATER-BATCH-'
-                    . $lockedApplication->application_id
-                    . '-'
-                    . now()->format('YmdHis');
+                . $lockedApplication->application_id
+                . '-'
+                . now()->format('YmdHis');
 
             $draftData['selected_activities'] = $selectedActivities;
             $draftData['processing_invoice_activities'] = $selectedActivities;
@@ -239,8 +239,8 @@ class WaterApplicationController extends Controller
                 ->values();
 
             $invoiceIndex = $unpaidInvoices->search(
-                fn (LsankInvoice $item) =>
-                    (int) $item->invoice_id === (int) $lockedInvoice->invoice_id
+                fn(LsankInvoice $item) =>
+                (int) $item->invoice_id === (int) $lockedInvoice->invoice_id
             );
 
             if ($invoiceIndex === false) {
@@ -256,14 +256,14 @@ class WaterApplicationController extends Controller
                 ?? 'Aktiviti Rekreasi Sukan Air';
 
             $remainingActivities = $selectedActivities
-                ->reject(fn ($item, $index) => (int) $index === (int) $invoiceIndex)
+                ->reject(fn($item, $index) => (int) $index === (int) $invoiceIndex)
                 ->values();
 
             $splitBatchId = $draftData['split_batch_id']
                 ?? 'WATER-BATCH-'
-                    . $lockedApplication->application_id
-                    . '-'
-                    . now()->format('YmdHis');
+                . $lockedApplication->application_id
+                . '-'
+                . now()->format('YmdHis');
 
             $paidApplication = $this->createPaidSplitApplication(
                 $lockedApplication,
@@ -411,7 +411,7 @@ class WaterApplicationController extends Controller
                 ->where('application_id', $lockedApplication->application_id)
                 ->whereIn('payment_type', self::FINAL_PAYMENT_TYPES)
                 ->pluck('payment_type')
-                ->map(fn ($type) => trim((string) $type))
+                ->map(fn($type) => trim((string) $type))
                 ->unique()
                 ->values();
 
@@ -506,7 +506,7 @@ class WaterApplicationController extends Controller
                         'payment_date' => now()->toDateTimeString(),
                         'remaining_unpaid_invoice_count' => $remainingInvoices->count(),
                         'remaining_invoices' => $remainingInvoices
-                            ->map(fn (LsankInvoice $item) => [
+                            ->map(fn(LsankInvoice $item) => [
                                 'invoice_id' => $item->invoice_id,
                                 'invoice_no' => $item->invoice_no,
                                 'payment_type' => $item->payment_type,
@@ -1069,7 +1069,7 @@ class WaterApplicationController extends Controller
     {
         return LsankReceipt::query()
             ->with(['invoice.application', 'payment'])
-            ->whereHas('invoice', fn ($query) => $query->whereIn('application_id', $applicationIds))
+            ->whereHas('invoice', fn($query) => $query->whereIn('application_id', $applicationIds))
             ->latest('receipt_id')
             ->get()
             ->map(function (LsankReceipt $receipt) {
@@ -1297,8 +1297,8 @@ class WaterApplicationController extends Controller
         $paidApplication->submitted_at = now();
         $paidApplication->remarks = trim(
             ($paidApplication->remarks ?? '')
-            . "\nBayaran satu invois berjaya pada "
-            . now()->format('d/m/Y H:i')
+                . "\nBayaran satu invois berjaya pada "
+                . now()->format('d/m/Y H:i')
         );
         $paidApplication->save();
 
@@ -1350,7 +1350,7 @@ class WaterApplicationController extends Controller
         }
 
         $activities = collect($activities)
-            ->map(fn ($item) => trim((string) $item))
+            ->map(fn($item) => trim((string) $item))
             ->filter()
             ->unique()
             ->values()
@@ -1445,7 +1445,7 @@ class WaterApplicationController extends Controller
         }
 
         $selectedActivities = collect($selectedActivities)
-            ->map(fn ($item) => trim((string) $item))
+            ->map(fn($item) => trim((string) $item))
             ->filter()
             ->unique()
             ->values()
@@ -1496,7 +1496,7 @@ class WaterApplicationController extends Controller
         }
 
         return collect(preg_split('/[,;\/]/', $value))
-            ->map(fn ($item) => trim((string) $item))
+            ->map(fn($item) => trim((string) $item))
             ->filter()
             ->values()
             ->all();
@@ -1704,8 +1704,8 @@ class WaterApplicationController extends Controller
             $reference = 'DRAF-' . $userId . '-' . now()->format('YmdHisv');
         } while (
             LsankApplication::query()
-                ->where('application_ref_no', $reference)
-                ->exists()
+            ->where('application_ref_no', $reference)
+            ->exists()
         );
 
         return $reference;

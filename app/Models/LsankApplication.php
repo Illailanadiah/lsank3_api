@@ -188,6 +188,18 @@ class LsankApplication extends Model
             'application_id'
         );
     }
+    /**
+     * Renewal record when this application was created
+     * for the renewal of an existing licence.
+     */
+    public function renewal()
+    {
+        return $this->hasOne(
+            LsankRenewalApplication::class,
+            'application_id',
+            'application_id'
+        );
+    }
 
     /*
     |--------------------------------------------------------------------------

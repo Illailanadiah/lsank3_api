@@ -41,6 +41,7 @@ class WaterApplicationController extends Controller
                 'type',
                 'waterBody',
                 'license.status',
+                'license.terminationRequest',
             ])
             ->where('user_id', $request->user()->user_id)
             ->where('application_type_id', $typeId)
@@ -89,7 +90,7 @@ class WaterApplicationController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' =>
-                        'Tiada aktiviti dipilih untuk penjanaan invois.',
+                    'Tiada aktiviti dipilih untuk penjanaan invois.',
                 ], 422);
             }
 
@@ -623,6 +624,7 @@ class WaterApplicationController extends Controller
             'documents',
             'reviews',
             'license.status',
+            'license.terminationRequest',
         ]);
 
         $detail = $this->formatApplicationDetail($application, self::TYPE_NAME);
@@ -1041,122 +1043,122 @@ class WaterApplicationController extends Controller
         ];
     }
 
-private function formatInvoiceItems(
-    array $applicationIds
-): array {
-    $invoices = LsankInvoice::query()
-        ->with('application')
-        ->whereIn(
-            'application_id',
-            $applicationIds
-        )
-        ->orderBy('application_id')
-        ->orderBy('invoice_id')
-        ->get();
-
-    $activityCounters = [];
-
-    return $invoices
-        ->map(function (
-            LsankInvoice $invoice
-        ) use (&$activityCounters) {
-            $application = $invoice->application;
-
-            $applicationId =
-                (int) $invoice->application_id;
-
-            $currentIndex =
-                $activityCounters[$applicationId] ?? 0;
-
-            $draftData = (
-                $application &&
-                is_array($application->draft_data)
+    private function formatInvoiceItems(
+        array $applicationIds
+    ): array {
+        $invoices = LsankInvoice::query()
+            ->with('application')
+            ->whereIn(
+                'application_id',
+                $applicationIds
             )
-                ? $application->draft_data
-                : [];
+            ->orderBy('application_id')
+            ->orderBy('invoice_id')
+            ->get();
 
-            /*
+        $activityCounters = [];
+
+        return $invoices
+            ->map(function (
+                LsankInvoice $invoice
+            ) use (&$activityCounters) {
+                $application = $invoice->application;
+
+                $applicationId =
+                    (int) $invoice->application_id;
+
+                $currentIndex =
+                    $activityCounters[$applicationId] ?? 0;
+
+                $draftData = (
+                    $application &&
+                    is_array($application->draft_data)
+                )
+                    ? $application->draft_data
+                    : [];
+
+                /*
              * Sebelum bayaran:
              * selected_activities mengandungi semua aktiviti.
              *
              * Selepas split:
              * setiap application hanya mempunyai satu aktiviti.
              */
-            $activities =
-                $draftData['selected_activities']
-                ?? $draftData['processing_invoice_activities']
-                ?? $draftData['original_selected_activities']
-                ?? [];
+                $activities =
+                    $draftData['selected_activities']
+                    ?? $draftData['processing_invoice_activities']
+                    ?? $draftData['original_selected_activities']
+                    ?? [];
 
-            if (!is_array($activities)) {
-                $activities = [];
-            }
+                if (!is_array($activities)) {
+                    $activities = [];
+                }
 
-            $activities = collect($activities)
-                ->map(
-                    fn ($item) => trim((string) $item)
-                )
-                ->filter()
-                ->values()
-                ->all();
+                $activities = collect($activities)
+                    ->map(
+                        fn($item) => trim((string) $item)
+                    )
+                    ->filter()
+                    ->values()
+                    ->all();
 
-            $activityName =
-                $activities[$currentIndex]
-                ?? $activities[0]
-                ?? $application?->activity_name
-                ?? $application?->activity_details
-                ?? '-';
+                $activityName =
+                    $activities[$currentIndex]
+                    ?? $activities[0]
+                    ?? $application?->activity_name
+                    ?? $application?->activity_details
+                    ?? '-';
 
-            $activityCounters[$applicationId] =
-                $currentIndex + 1;
+                $activityCounters[$applicationId] =
+                    $currentIndex + 1;
 
-            return [
-                'invoice_id' =>
+                return [
+                    'invoice_id' =>
                     $invoice->invoice_id,
 
-                'invoice_no' =>
+                    'invoice_no' =>
                     $invoice->invoice_no,
 
-                'payment_type' =>
+                    'payment_type' =>
                     $invoice->payment_type
-                    ?? self::PROCESSING_PAYMENT_TYPE,
+                        ?? self::PROCESSING_PAYMENT_TYPE,
 
-                'amount' =>
+                    'amount' =>
                     (float) $invoice->total_amount,
 
-                'amount_display' =>
+                    'amount_display' =>
                     'RM '
-                    . number_format(
-                        $invoice->total_amount,
-                        2
-                    ),
+                        . number_format(
+                            $invoice->total_amount,
+                            2
+                        ),
 
-                'invoice_date' =>
+                    'invoice_date' =>
                     optional($invoice->invoice_date)
                         ->format('d/m/Y')
-                    ?? '-',
+                        ?? '-',
 
-                'due_date' =>
+                    'due_date' =>
                     optional($invoice->due_date)
                         ->format('d/m/Y')
-                    ?? '-',
+                        ?? '-',
 
-                'status' =>
+                    'status' =>
                     $invoice->status,
 
-                'paid' =>
+                    'paid' =>
                     $this->isPaidInvoice($invoice),
 
-                'application_id' =>
+                    'application_id' =>
                     $invoice->application_id,
 
-                'application_ref_no' =>
+                    'application_ref_no' =>
                     $application?->application_ref_no,
 
-                'application_no' =>
+                    'application_no' =>
                     $application?->application_ref_no,
 
-                'application_ref_nos' =>
+                    'application_ref_nos' =>
                     $application?->application_ref_no
                         ? [
                             $application
@@ -1164,7 +1166,7 @@ private function formatInvoiceItems(
                         ]
                         : [],
 
-                'application_nos' =>
+                    'application_nos' =>
                     $application?->application_ref_no
                         ? [
                             $application
@@ -1172,19 +1174,19 @@ private function formatInvoiceItems(
                         ]
                         : [],
 
-                /*
+                    /*
                  * Aktiviti khusus untuk invois ini.
                  */
-                'activity_name' =>
+                    'activity_name' =>
                     $activityName,
 
-                'activity_details' =>
+                    'activity_details' =>
                     $activityName,
-            ];
-        })
-        ->values()
-        ->all();
-}
+                ];
+            })
+            ->values()
+            ->all();
+    }
 
     private function formatReceiptItems(array $applicationIds): array
     {
@@ -1227,13 +1229,17 @@ private function formatInvoiceItems(
             ->all();
     }
 
-    private function formatLicense(LsankApplication $application): ?array
-    {
-        if (!$application->license) {
+    private function formatLicense(
+        LsankApplication $application
+    ): ?array {
+        $license = $application->license;
+
+        if (!$license) {
             return null;
         }
 
-        $license = $application->license;
+        $terminationRequest = $license->terminationRequest;
+
         return [
             'license_id' => $license->license_id,
             'license_no' => $license->license_no,
@@ -1252,6 +1258,62 @@ private function formatInvoiceItems(
             'qr_code_path' => $license->qr_code_path,
             'license_pdf_path' => $license->license_pdf_path,
             'generated_at' => optional($license->generated_at)->toDateTimeString(),
+            'termination_request' => $terminationRequest
+                ? [
+                    'termination_request_id' =>
+                    $terminationRequest->termination_request_id,
+
+                    'license_id' =>
+                    $terminationRequest->license_id,
+
+                    'application_id' =>
+                    $terminationRequest->application_id,
+
+                    'application_type' =>
+                    $terminationRequest->application_type,
+
+                    'status' =>
+                    $terminationRequest->termination_status,
+
+                    'reason' =>
+                    $terminationRequest->reason,
+
+                    'requested_at' => optional(
+                        $terminationRequest->requested_at
+                    )?->toIso8601String(),
+
+                    'decided_by_user_id' =>
+                    $terminationRequest->decided_by_user_id,
+
+                    'director_remark' =>
+                    $terminationRequest->director_remark,
+
+                    'rejection_reason' =>
+                    $terminationRequest->termination_status === 'rejected'
+                        ? $terminationRequest->director_remark
+                        : null,
+
+                    'decided_at' => optional(
+                        $terminationRequest->decided_at
+                    )?->toIso8601String(),
+
+                    'security_refund_status' =>
+                    $terminationRequest->security_refund_status,
+
+                    'security_refund_amount' =>
+                    $terminationRequest->security_refund_amount,
+
+                    'security_refund_reference' =>
+                    $terminationRequest->security_refund_reference,
+
+                    'security_refund_note' =>
+                    $terminationRequest->security_refund_note,
+
+                    'security_refunded_at' => optional(
+                        $terminationRequest->security_refunded_at
+                    )?->toIso8601String(),
+                ]
+                : null,
         ];
     }
 
@@ -1455,11 +1517,11 @@ private function formatInvoiceItems(
         return $paidApplication;
     }
 
-private function resolveSelectedActivities(
-    LsankApplication $application,
-    array $draftData
-): array {
-    /*
+    private function resolveSelectedActivities(
+        LsankApplication $application,
+        array $draftData
+    ): array {
+        /*
      * selected_activities ialah sumber utama ketika permohonan
      * belum dibayar.
      *
@@ -1467,54 +1529,54 @@ private function resolveSelectedActivities(
      * permohonan induk akan mengandungi aktiviti yang masih belum
      * dibayar sahaja.
      */
-    $activities = $draftData['selected_activities']
-        ?? ($draftData['meta']['selected_activities'] ?? null)
-        ?? $draftData['processing_invoice_activities']
-        ?? $draftData['original_selected_activities']
-        ?? [];
+        $activities = $draftData['selected_activities']
+            ?? ($draftData['meta']['selected_activities'] ?? null)
+            ?? $draftData['processing_invoice_activities']
+            ?? $draftData['original_selected_activities']
+            ?? [];
 
-    if (!is_array($activities) || empty($activities)) {
-        $activityDetails = trim(
-            (string) (
-                $application->activity_details
-                ?? ''
-            )
-        );
-
-        if ($activityDetails !== '') {
-            $activities = collect(
-                preg_split('/[,;|]/', $activityDetails)
-            )
-                ->map(
-                    fn ($item) => trim((string) $item)
+        if (!is_array($activities) || empty($activities)) {
+            $activityDetails = trim(
+                (string) (
+                    $application->activity_details
+                    ?? ''
                 )
-                ->filter()
-                ->values()
-                ->all();
+            );
+
+            if ($activityDetails !== '') {
+                $activities = collect(
+                    preg_split('/[,;|]/', $activityDetails)
+                )
+                    ->map(
+                        fn($item) => trim((string) $item)
+                    )
+                    ->filter()
+                    ->values()
+                    ->all();
+            }
         }
+
+        if (!is_array($activities) || empty($activities)) {
+            $activities = [
+                $application->activity_name
+                    ?? $application->activity_type
+                    ?? 'Aktiviti Rekreasi Sukan Air',
+            ];
+        }
+
+        $activities = collect($activities)
+            ->map(
+                fn($item) => trim((string) $item)
+            )
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        return !empty($activities)
+            ? $activities
+            : ['Aktiviti Rekreasi Sukan Air'];
     }
-
-    if (!is_array($activities) || empty($activities)) {
-        $activities = [
-            $application->activity_name
-                ?? $application->activity_type
-                ?? 'Aktiviti Rekreasi Sukan Air',
-        ];
-    }
-
-    $activities = collect($activities)
-        ->map(
-            fn ($item) => trim((string) $item)
-        )
-        ->filter()
-        ->unique()
-        ->values()
-        ->all();
-
-    return !empty($activities)
-        ? $activities
-        : ['Aktiviti Rekreasi Sukan Air'];
-}
 
     private function fillApplicationFields(
         LsankApplication $application,
@@ -1579,148 +1641,148 @@ private function resolveSelectedActivities(
         return strtolower(trim((string) $invoice->status)) === 'paid';
     }
 
-private function normalizeWaterDraftData(
-    array $validated,
-    Request $request,
-    ?LsankApplication $application = null
-): array {
-    $incoming = $validated['draft_data']
-        ?? $request->input('draft_data')
-        ?? [];
+    private function normalizeWaterDraftData(
+        array $validated,
+        Request $request,
+        ?LsankApplication $application = null
+    ): array {
+        $incoming = $validated['draft_data']
+            ?? $request->input('draft_data')
+            ?? [];
 
-    $incoming = is_array($incoming)
-        ? $incoming
-        : [];
+        $incoming = is_array($incoming)
+            ? $incoming
+            : [];
 
-    $existing = (
-        $application &&
-        is_array($application->draft_data)
-    )
-        ? $application->draft_data
-        : [];
+        $existing = (
+            $application &&
+            is_array($application->draft_data)
+        )
+            ? $application->draft_data
+            : [];
 
-    $draftData = array_replace_recursive(
-        $existing,
-        $incoming
-    );
+        $draftData = array_replace_recursive(
+            $existing,
+            $incoming
+        );
 
-    /*
+        /*
      * Utamakan selected_activities yang dihantar oleh Flutter.
      * Jangan ambil original_selected_activities dahulu kerana
      * nilainya mungkin data lama.
      */
-    $selectedActivities =
-        $incoming['selected_activities']
-        ?? ($incoming['meta']['selected_activities'] ?? null)
-        ?? $draftData['selected_activities']
-        ?? ($draftData['meta']['selected_activities'] ?? null)
-        ?? $this->normalizeStringList(
-            $validated['activity_details'] ?? null
-        );
+        $selectedActivities =
+            $incoming['selected_activities']
+            ?? ($incoming['meta']['selected_activities'] ?? null)
+            ?? $draftData['selected_activities']
+            ?? ($draftData['meta']['selected_activities'] ?? null)
+            ?? $this->normalizeStringList(
+                $validated['activity_details'] ?? null
+            );
 
-    if (
-        !is_array($selectedActivities) ||
-        empty($selectedActivities)
-    ) {
-        $selectedActivities = [
-            $validated['activity_name']
-                ?? $application?->activity_name
-                ?? 'Aktiviti Rekreasi Sukan Air',
-        ];
-    }
+        if (
+            !is_array($selectedActivities) ||
+            empty($selectedActivities)
+        ) {
+            $selectedActivities = [
+                $validated['activity_name']
+                    ?? $application?->activity_name
+                    ?? 'Aktiviti Rekreasi Sukan Air',
+            ];
+        }
 
-    $selectedActivities = collect($selectedActivities)
-        ->map(
-            fn ($item) => trim((string) $item)
-        )
-        ->filter()
-        ->unique()
-        ->values()
-        ->all();
+        $selectedActivities = collect($selectedActivities)
+            ->map(
+                fn($item) => trim((string) $item)
+            )
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
 
-    $isSplitChild =
-        ($draftData['is_split_child'] ?? false) === true;
+        $isSplitChild =
+            ($draftData['is_split_child'] ?? false) === true;
 
-    $draftData['meta'] = array_replace_recursive(
-        is_array($draftData['meta'] ?? null)
-            ? $draftData['meta']
-            : [],
-        [
-            'module' => 'water',
+        $draftData['meta'] = array_replace_recursive(
+            is_array($draftData['meta'] ?? null)
+                ? $draftData['meta']
+                : [],
+            [
+                'module' => 'water',
 
-            'step' =>
+                'step' =>
                 $validated['current_step']
-                ?? $draftData['step']
-                ?? $draftData['meta']['step']
-                ?? 0,
+                    ?? $draftData['step']
+                    ?? $draftData['meta']['step']
+                    ?? 0,
 
-            'current_step' =>
+                'current_step' =>
                 $validated['current_step']
-                ?? $draftData['current_step']
-                ?? $draftData['meta']['current_step']
-                ?? 0,
+                    ?? $draftData['current_step']
+                    ?? $draftData['meta']['current_step']
+                    ?? 0,
 
-            'selected_activities' =>
+                'selected_activities' =>
                 $selectedActivities,
 
-            'applicant_type' =>
+                'applicant_type' =>
                 $validated['applicant_type']
-                ?? $draftData['applicant_type']
-                ?? null,
+                    ?? $draftData['applicant_type']
+                    ?? null,
 
-            'is_one_off' =>
+                'is_one_off' =>
                 $draftData['is_one_off']
-                ?? $draftData['meta']['is_one_off']
-                ?? false,
+                    ?? $draftData['meta']['is_one_off']
+                    ?? false,
 
-            'license_duration_year' =>
+                'license_duration_year' =>
                 $draftData['license_duration_year']
-                ?? $draftData['meta']['license_duration_year']
-                ?? 1,
-        ]
-    );
+                    ?? $draftData['meta']['license_duration_year']
+                    ?? 1,
+            ]
+        );
 
-    $draftData['selected_activities'] =
-        $selectedActivities;
+        $draftData['selected_activities'] =
+            $selectedActivities;
 
-    /*
+        /*
      * Ketika masih draf atau sebelum split, sentiasa kemas kini
      * senarai aktiviti asal dan senarai untuk invois.
      */
-    if (!$isSplitChild) {
-        $draftData['original_selected_activities'] =
-            $selectedActivities;
+        if (!$isSplitChild) {
+            $draftData['original_selected_activities'] =
+                $selectedActivities;
 
-        $draftData['processing_invoice_activities'] =
-            $selectedActivities;
+            $draftData['processing_invoice_activities'] =
+                $selectedActivities;
+        }
+
+        $draftData['recreation_details'] = is_array(
+            $draftData['recreation_details'] ?? null
+        )
+            ? $draftData['recreation_details']
+            : ($validated['recreation_details'] ?? []);
+
+        $draftData['vessel_details'] = is_array(
+            $draftData['vessel_details'] ?? null
+        )
+            ? $draftData['vessel_details']
+            : [];
+
+        $draftData['cage_details'] = is_array(
+            $draftData['cage_details'] ?? null
+        )
+            ? $draftData['cage_details']
+            : [];
+
+        $draftData['construction_details'] = is_array(
+            $draftData['construction_details'] ?? null
+        )
+            ? $draftData['construction_details']
+            : [];
+
+        return $draftData;
     }
-
-    $draftData['recreation_details'] = is_array(
-        $draftData['recreation_details'] ?? null
-    )
-        ? $draftData['recreation_details']
-        : ($validated['recreation_details'] ?? []);
-
-    $draftData['vessel_details'] = is_array(
-        $draftData['vessel_details'] ?? null
-    )
-        ? $draftData['vessel_details']
-        : [];
-
-    $draftData['cage_details'] = is_array(
-        $draftData['cage_details'] ?? null
-    )
-        ? $draftData['cage_details']
-        : [];
-
-    $draftData['construction_details'] = is_array(
-        $draftData['construction_details'] ?? null
-    )
-        ? $draftData['construction_details']
-        : [];
-
-    return $draftData;
-}
 
     private function normalizeStringList(?string $value): array
     {

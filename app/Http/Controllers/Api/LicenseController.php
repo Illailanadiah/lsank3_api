@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
 use Throwable;
+use App\Models\LsankLicenseTerminationRequest;
 
 class LicenseController extends Controller
 {
@@ -83,6 +84,192 @@ class LicenseController extends Controller
             'success' => true,
             'license' => $this->formatLicense($license),
         ]);
+    }
+
+    /**
+     * Applicant submits a license termination request.
+     *
+     * The license remains active until the Director
+     * approves the request.
+     */
+    public function requestTermination(
+        Request $request,
+        LsankLicense $license
+    ) {
+        $validated = $request->validate([
+            'application_id' => [
+                'nullable',
+                'integer',
+            ],
+            'application_type' => [
+                'nullable',
+                'string',
+                'max:30',
+            ],
+            'reason' => [
+                'required',
+                'string',
+                'min:5',
+                'max:1000',
+            ],
+        ]);
+
+        $userId = (int) (
+            $request->user()->user_id
+            ?? $request->user()->id
+            ?? 0
+        );
+
+        if (
+            $userId <= 0 ||
+            !$license->belongsToUser($userId)
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Anda tidak dibenarkan memohon '
+                    . 'penamatan lesen ini.',
+            ], 403);
+        }
+
+        $license->loadMissing([
+            'application',
+            'status',
+            'terminationRequest',
+        ]);
+
+        if (
+            isset($validated['application_id']) &&
+            (int) $validated['application_id'] !==
+            (int) $license->application_id
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'ID permohonan tidak sepadan '
+                    . 'dengan lesen ini.',
+            ], 422);
+        }
+
+        if ($license->is_expired) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Lesen ini telah tamat dan tidak boleh '
+                    . 'dimohon untuk penamatan.',
+            ], 422);
+        }
+
+        $statusValue = strtolower(
+            trim((string) (
+                $license->status?->status_code
+                ?? $license->status?->status_name
+                ?? ''
+            ))
+        );
+
+        $licenseAlreadyInactive =
+            str_contains($statusValue, 'expired') ||
+            str_contains($statusValue, 'inactive') ||
+            str_contains($statusValue, 'terminated') ||
+            str_contains($statusValue, 'tidak aktif') ||
+            str_contains($statusValue, 'tamat');
+
+        if ($licenseAlreadyInactive) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Lesen ini sudah tidak aktif atau telah tamat.',
+            ], 422);
+        }
+
+        $hasPendingRequest = $license
+            ->terminationRequests()
+            ->where('termination_status', 'pending')
+            ->exists();
+
+        if ($hasPendingRequest) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Permohonan penamatan lesen ini sedang '
+                    . 'menunggu kelulusan Pengarah.',
+            ], 409);
+        }
+
+        $hasApprovedRequest = $license
+            ->terminationRequests()
+            ->where('termination_status', 'approved')
+            ->exists();
+
+        if ($hasApprovedRequest) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Permohonan penamatan lesen ini '
+                    . 'telah diluluskan.',
+            ], 409);
+        }
+
+        $terminationRequest = DB::transaction(
+            function () use (
+                $validated,
+                $license,
+                $userId
+            ) {
+                return LsankLicenseTerminationRequest::create([
+                    'license_id' =>
+                    $license->license_id,
+
+                    'application_id' =>
+                    $license->application_id,
+
+                    'application_type' =>
+                    $validated['application_type']
+                        ?? null,
+
+                    'reason' =>
+                    trim($validated['reason']),
+
+                    'termination_status' =>
+                    'pending',
+
+                    'requested_by_user_id' =>
+                    $userId,
+
+                    'requested_at' =>
+                    now(),
+
+                    'security_refund_status' =>
+                    'not_started',
+                ]);
+            }
+        );
+
+        $license->unsetRelation('terminationRequest');
+
+        $license->load([
+            'application',
+            'status',
+            'terminationRequest',
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' =>
+            'Permohonan penamatan berjaya dihantar '
+                . 'kepada Pengarah.',
+
+            'data' => [
+                'termination_request' =>
+                $this->formatTerminationRequest(
+                    $terminationRequest
+                ),
+
+                'license' =>
+                $this->formatLicense($license),
+            ],
+        ], 201);
     }
 
     /**
@@ -654,12 +841,76 @@ class LicenseController extends Controller
             : [];
     }
 
+    private function formatTerminationRequest(
+        ?LsankLicenseTerminationRequest $termination
+    ): ?array {
+        if ($termination === null) {
+            return null;
+        }
+
+        return [
+            'termination_request_id' =>
+            $termination->termination_request_id,
+
+            'license_id' =>
+            $termination->license_id,
+
+            'application_id' =>
+            $termination->application_id,
+
+            'application_type' =>
+            $termination->application_type,
+
+            'status' =>
+            $termination->termination_status,
+
+            'reason' =>
+            $termination->reason,
+
+            'requested_at' => optional(
+                $termination->requested_at
+            )?->toIso8601String(),
+
+            'decided_by_user_id' =>
+            $termination->decided_by_user_id,
+
+            'director_remark' =>
+            $termination->director_remark,
+
+            'rejection_reason' =>
+            $termination->termination_status === 'rejected'
+                ? $termination->director_remark
+                : null,
+
+            'decided_at' => optional(
+                $termination->decided_at
+            )?->toIso8601String(),
+
+            'security_refund_status' =>
+            $termination->security_refund_status,
+
+            'security_refund_amount' =>
+            $termination->security_refund_amount,
+
+            'security_refund_reference' =>
+            $termination->security_refund_reference,
+
+            'security_refund_note' =>
+            $termination->security_refund_note,
+
+            'security_refunded_at' => optional(
+                $termination->security_refunded_at
+            )?->toIso8601String(),
+        ];
+    }
+
     private function formatLicense(
         LsankLicense $license
     ): array {
         $license->loadMissing([
             'application',
             'status',
+            'terminationRequest',
         ]);
 
         return [
@@ -683,6 +934,11 @@ class LicenseController extends Controller
             'generated_at' => optional(
                 $license->generated_at
             )?->toIso8601String(),
+
+            'termination_request' =>
+            $this->formatTerminationRequest(
+                $license->terminationRequest
+            ),
 
             'can_download_pdf' =>
             $license->pdf_downloaded_at === null,

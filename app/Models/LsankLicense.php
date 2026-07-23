@@ -56,6 +56,10 @@ class LsankLicense extends Model
         'updated_at' => 'datetime',
     ];
 
+    protected $with = [
+        'terminationRequest',
+    ];
+
     public function application()
     {
         return $this->belongsTo(
@@ -82,6 +86,33 @@ class LsankLicense extends Model
             LsankRenewalApplication::class,
             'license_id',
             'license_id'
+        );
+    }
+
+    /**
+     * All license termination requests.
+     */
+    public function terminationRequests()
+    {
+        return $this->hasMany(
+            LsankLicenseTerminationRequest::class,
+            'license_id',
+            'license_id'
+        );
+    }
+
+    /**
+     * Latest license termination request.
+     */
+    public function terminationRequest()
+    {
+        return $this->hasOne(
+            LsankLicenseTerminationRequest::class,
+            'license_id',
+            'license_id'
+        )->ofMany(
+            'termination_request_id',
+            'max'
         );
     }
     /**

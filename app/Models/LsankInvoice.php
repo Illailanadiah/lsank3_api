@@ -19,12 +19,20 @@ class LsankInvoice extends Model
         'payment_type',
         'total_amount',
         'status',
+        'security_refund_status',
+        'security_refund_requested_at',
+        'security_refunded_at',
+        'security_refunded_by',
+        'security_refund_note',
+
     ];
 
     protected $casts = [
         'invoice_date' => 'date',
         'due_date' => 'date',
         'total_amount' => 'decimal:2',
+        'security_refund_requested_at' => 'datetime',
+        'security_refunded_at' => 'datetime',
     ];
 
     public function application()

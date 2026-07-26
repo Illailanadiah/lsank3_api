@@ -1149,6 +1149,26 @@ class WaterApplicationController extends Controller
                     'paid' =>
                     $this->isPaidInvoice($invoice),
 
+                    'security_refund_status' =>
+                    $invoice->security_refund_status
+                        ?? 'not_requested',
+
+                    'security_refund_requested_at' =>
+                    optional(
+                        $invoice->security_refund_requested_at
+                    )->toDateTimeString(),
+
+                    'security_refunded_at' =>
+                    optional(
+                        $invoice->security_refunded_at
+                    )->toDateTimeString(),
+
+                    'security_refunded_by' =>
+                    $invoice->security_refunded_by,
+
+                    'security_refund_note' =>
+                    $invoice->security_refund_note,
+
                     'application_id' =>
                     $invoice->application_id,
 

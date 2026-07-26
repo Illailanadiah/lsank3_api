@@ -14,6 +14,7 @@ use Illuminate\Support\Str;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
 use Throwable;
 use App\Models\LsankLicenseTerminationRequest;
+use App\Models\LsankInvoice;
 
 class LicenseController extends Controller
 {
@@ -270,6 +271,134 @@ class LicenseController extends Controller
                 $this->formatLicense($license),
             ],
         ], 201);
+    }
+
+    public function approveTermination(
+        Request $request,
+        LsankLicense $license
+    ) {
+        if (!$this->isKetuaPengarah($request->user())) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Hanya Ketua Pengarah dibenarkan '
+                    . 'menutup lesen.',
+            ], 403);
+        }
+
+        $result = DB::transaction(
+            function () use ($request, $license) {
+                $lockedLicense = LsankLicense::query()
+                    ->where(
+                        'license_id',
+                        $license->license_id
+                    )
+                    ->lockForUpdate()
+                    ->firstOrFail();
+
+                $terminationRequest =
+                    LsankLicenseTerminationRequest::query()
+                    ->where(
+                        'license_id',
+                        $lockedLicense->license_id
+                    )
+                    ->where(
+                        'termination_status',
+                        'pending'
+                    )
+                    ->latest('termination_request_id')
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$terminationRequest) {
+                    return null;
+                }
+
+                $directorUserId = (int) (
+                    $request->user()->user_id
+                    ?? $request->user()->id
+                    ?? 0
+                );
+
+                $terminationRequest->forceFill([
+                    'termination_status' => 'approved',
+                    'decided_by_user_id' => $directorUserId,
+                    'decided_at' => now(),
+                    'director_remark' =>
+                    'Permohonan penamatan diluluskan.',
+                    'security_refund_status' => 'pending',
+                ])->save();
+
+                $securityInvoice = LsankInvoice::query()
+                    ->where(
+                        'application_id',
+                        $lockedLicense->application_id
+                    )
+                    ->where(
+                        'payment_type',
+                        'Wang Sekuriti'
+                    )
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($securityInvoice) {
+                    $securityInvoiceStatus = strtolower(
+                        trim((string) $securityInvoice->status)
+                    );
+
+                    if ($securityInvoiceStatus !== 'paid') {
+                        throw \Illuminate\Validation\ValidationException
+                            ::withMessages([
+                                'security_invoice' =>
+                                'Wang sekuriti belum dibayar dan '
+                                    . 'tidak boleh dipulangkan.',
+                            ]);
+                    }
+
+                    $securityInvoice->forceFill([
+                        'security_refund_status' => 'pending',
+                        'security_refund_requested_at' => now(),
+                        'security_refunded_at' => null,
+                        'security_refunded_by' => null,
+                        'security_refund_note' =>
+                        'Pemulangan wang sekuriti sedang diproses '
+                            . 'selepas penamatan lesen diluluskan.',
+                    ])->save();
+                }
+
+                $lockedLicense->forceFill([
+                    'license_status_id' =>
+                    $this->terminatedLicenseStatusId(),
+                ])->save();
+
+                return $lockedLicense;
+            }
+        );
+
+        if ($result === null) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Tiada permohonan penamatan yang sedang '
+                    . 'menunggu kelulusan.',
+            ], 422);
+        }
+
+        $result->unsetRelation('terminationRequest');
+
+        $result->load([
+            'application',
+            'status',
+            'terminationRequest',
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' =>
+            'Penamatan lesen berjaya diluluskan. '
+                . 'Wang sekuriti kini menunggu pemulangan.',
+            'license' => $this->formatLicense($result),
+        ]);
     }
 
     /**
@@ -902,6 +1031,87 @@ class LicenseController extends Controller
                 $termination->security_refunded_at
             )?->toIso8601String(),
         ];
+    }
+
+    private function isKetuaPengarah(
+        mixed $user
+    ): bool {
+        $roleCandidates = [
+            data_get($user, 'role.role_name'),
+            data_get($user, 'role.name'),
+            data_get($user, 'role.role_code'),
+            data_get($user, 'role.code'),
+            data_get($user, 'role_name'),
+            data_get($user, 'role_code'),
+            data_get($user, 'user_role'),
+            data_get($user, 'user_type'),
+            data_get($user, 'role'),
+        ];
+
+        foreach ($roleCandidates as $candidate) {
+            if (!is_scalar($candidate)) {
+                continue;
+            }
+
+            $normalized = strtolower(
+                trim((string) $candidate)
+            );
+
+            $normalized = str_replace(
+                ['_', '-'],
+                ' ',
+                $normalized
+            );
+
+            $normalized = preg_replace(
+                '/\s+/',
+                ' ',
+                $normalized
+            );
+
+            if (
+                in_array(
+                    $normalized,
+                    [
+                        'ketua pengarah',
+                        'director general',
+                    ],
+                    true
+                )
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function terminatedLicenseStatusId(): int
+    {
+        $status = LsankLicenseStatus::query()
+            ->where(function ($query) {
+                $query
+                    ->whereIn('status_code', [
+                        'terminated',
+                        'tamat',
+                        'closed',
+                    ])
+                    ->orWhereIn('status_name', [
+                        'Tamat',
+                        'Ditamatkan',
+                    ]);
+            })
+            ->first();
+
+        if (!$status) {
+            $status = LsankLicenseStatus::query()
+                ->create([
+                    'status_code' => 'terminated',
+                    'status_name' => 'Tamat',
+                ]);
+        }
+
+        return (int) $status->license_status_id;
     }
 
     private function formatLicense(

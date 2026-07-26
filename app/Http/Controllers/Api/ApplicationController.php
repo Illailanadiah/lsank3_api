@@ -410,6 +410,16 @@ class ApplicationController extends Controller
         Request $request,
         LsankInvoice $invoice
     ) {
+
+        if (!$this->canManageSecurityRefund($request->user())) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Hanya Admin atau Bahagian Kewangan dibenarkan '
+                    . 'mengemaskini status pemulangan wang sekuriti.',
+            ], 403);
+        }
+
         $validated = $request->validate([
             'security_refund_status' => [
                 'required',
@@ -521,6 +531,12 @@ class ApplicationController extends Controller
             'head_feedback_target' => 'nullable|string|max:100',
             'head_officer_name' => 'nullable|string|max:255',
             'head_officer_email' => 'nullable|email|max:255',
+            'director_decision' =>
+            'nullable|string|in:lulus,gagal',
+            'director_remark' =>
+            'nullable|string',
+            'director_feedback' =>
+            'nullable|string',
         ]);
 
 
@@ -688,15 +704,61 @@ class ApplicationController extends Controller
             'effluent',
         ]);
 
-        $fresh = $application->fresh();
-
         $finalInvoices = [];
         $license = null;
 
+        $freshReviewData = is_array($fresh->review_data)
+            ? $fresh->review_data
+            : [];
+
+        $directorDecision = strtolower(
+            trim(
+                (string) $request->input(
+                    'director_decision',
+                    ''
+                )
+            )
+        );
+
+        if ($directorDecision === '') {
+            $directorDecision = strtolower(
+                trim(
+                    (string) (
+                        $freshReviewData['director_decision']
+                        ?? ''
+                    )
+                )
+            );
+        }
+
+        $workflowStage = strtolower(
+            trim(
+                (string) $request->input(
+                    'workflow_stage',
+                    ''
+                )
+            )
+        );
+
+        if ($workflowStage === '') {
+            $workflowStage = strtolower(
+                trim(
+                    (string) (
+                        $freshReviewData['workflow_stage']
+                        ?? data_get(
+                            $freshReviewData,
+                            'meta.workflow_stage'
+                        )
+                        ?? ''
+                    )
+                )
+            );
+        }
+
         $isDirectorApproval =
             $fresh->isDirectorApproved()
-            && $request->input('director_decision') === 'lulus'
-            && $request->input('workflow_stage') === 'director_approved';
+            && $directorDecision === 'lulus'
+            && $workflowStage === 'director_approved';
 
         if ($isDirectorApproval) {
             $finalInvoices =
@@ -1453,6 +1515,51 @@ class ApplicationController extends Controller
             ? 250
             : 500 * $licenseDurationYear;
 
+        $selectedActivities =
+            $draftData['selected_activities']
+            ?? $draftMeta['selected_activities']
+            ?? [];
+
+        $selectedActivities = is_array($selectedActivities)
+            ? $selectedActivities
+            : [];
+
+        $activityCount = max(
+            1,
+            count($selectedActivities)
+        );
+
+        $securityFee = $this->moneyValue(
+            $reviewData['invoice_fee_sekuriti']
+                ?? $reviewData['security_amount']
+                ?? 0
+        );
+
+        $isWaterApplication =
+            $this->displayLicenseType($application)
+            === 'Aktiviti Badan Perairan';
+
+        /*
+ * Fallback untuk permohonan Badan Perairan apabila
+ * nilai wang sekuriti tidak disimpan dalam review_data.
+ */
+        if ($securityFee <= 0 && $isWaterApplication) {
+            if ($isOneOff) {
+                $securityFee = in_array(
+                    'Aktiviti Binaan',
+                    $selectedActivities,
+                    true
+                )
+                    ? 1000
+                    : 0;
+            } else {
+                $securityFee = 1000 * $activityCount;
+            }
+        }
+
+        $reviewData['invoice_fee_sekuriti'] =
+            $securityFee;
+
         /*
      * Aktiviti yang dikecualikan tidak mempunyai
      * Fi Lesen, Fi Caj atau Wang Sekuriti.
@@ -1506,11 +1613,7 @@ class ApplicationController extends Controller
             [
                 'payment_type' => 'Wang Sekuriti',
                 'fee_code' => '04',
-                'amount' => $this->moneyValue(
-                    $reviewData['invoice_fee_sekuriti']
-                        ?? $reviewData['security_amount']
-                        ?? 0
-                ),
+                'amount' => $securityFee,
             ],
         ];
 
@@ -1582,16 +1685,13 @@ class ApplicationController extends Controller
 
                     'status' => 'unpaid',
 
-                    'security_refund_status' =>
-                    $feeItem['payment_type'] === 'Wang Sekuriti'
-                        ? 'not_requested'
-                        : null,
+                    'security_refund_status' => 'not_requested',
                 ]);
             } elseif ($invoice->status !== 'paid') {
                 /*
-             * Kalau invois belum dibayar dan jumlah fi berubah,
-             * kemas kini jumlah tanpa mencipta rekod baharu.
-             */
+     * Kalau invois belum dibayar dan jumlah fi berubah,
+     * kemas kini jumlah tanpa mencipta rekod baharu.
+     */
                 $invoice->total_amount =
                     $feeItem['amount'];
 
@@ -1602,6 +1702,10 @@ class ApplicationController extends Controller
                     now()->addDays(14)->toDateString();
 
                 $invoice->status = 'unpaid';
+                $invoice->security_refund_status =
+                    $invoice->security_refund_status
+                    ?: 'not_requested';
+
                 $invoice->save();
             }
 
@@ -1739,5 +1843,53 @@ class ApplicationController extends Controller
         }
 
         return $latestRunningNo + 1;
+    }
+
+    private function canManageSecurityRefund(mixed $user): bool
+    {
+        $roleCandidates = [
+            data_get($user, 'role.role_name'),
+            data_get($user, 'role.name'),
+            data_get($user, 'role.role_code'),
+            data_get($user, 'role.code'),
+            data_get($user, 'role_name'),
+            data_get($user, 'role_code'),
+            data_get($user, 'user_role'),
+            data_get($user, 'user_type'),
+            data_get($user, 'role'),
+        ];
+
+        foreach ($roleCandidates as $candidate) {
+            if (!is_scalar($candidate)) {
+                continue;
+            }
+
+            $normalized = strtolower(trim((string) $candidate));
+
+            $normalized = str_replace(
+                ['_', '-'],
+                ' ',
+                $normalized
+            );
+
+            $normalized = preg_replace(
+                '/\s+/',
+                ' ',
+                $normalized
+            );
+
+            if (in_array($normalized, [
+                'admin',
+                'administrator',
+                'kewangan',
+                'pegawai kewangan',
+                'bahagian kewangan',
+                'finance',
+            ], true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

@@ -301,6 +301,15 @@ Route::middleware('auth:sanctum')->group(function () {
     |--------------------------------------------------------------------------
     */
 
+    Route::patch(
+        '/admin/licenses/{license}/termination/approve',
+        [
+            LicenseController::class,
+            'approveTermination',
+        ]
+    )->whereNumber('license')
+        ->name('admin.licenses.termination.approve');
+
     Route::prefix('licenses')->group(function () {
 
         Route::get('/renewals/eligible', [

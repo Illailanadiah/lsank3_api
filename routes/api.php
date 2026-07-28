@@ -287,6 +287,14 @@ Route::middleware('auth:sanctum')->group(function () {
     |--------------------------------------------------------------------------
     */
 
+    Route::get(
+        '/admin/invoices/security-refunds',
+        [
+            ApplicationController::class,
+            'adminSecurityRefunds',
+        ]
+    );
+    
     Route::patch(
         '/admin/invoices/{invoice}/security-refund-status',
         [

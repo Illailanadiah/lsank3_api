@@ -406,11 +406,99 @@ class ApplicationController extends Controller
         ]);
     }
 
+    public function adminSecurityRefunds(Request $request)
+    {
+        if (!$this->canManageSecurityRefund($request->user())) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Hanya Admin atau Bahagian Kewangan dibenarkan melihat rekod refund.',
+            ], 403);
+        }
+
+        $invoices = LsankInvoice::query()
+            ->with([
+                'application.applicant.company',
+                'application.type',
+            ])
+            ->whereRaw(
+                'LOWER(payment_type) LIKE ?',
+                ['%sekuriti%']
+            )
+            ->orderByDesc('invoice_id')
+            ->get()
+            ->map(function (LsankInvoice $invoice) {
+                $application = $invoice->application;
+
+                return [
+                    'invoice_id' => $invoice->invoice_id,
+                    'invoice_no' => $invoice->invoice_no,
+                    'application_id' => $invoice->application_id,
+                    'application_no' =>
+                    $application?->application_ref_no ?? '-',
+                    'applicant_name' =>
+                    $application?->applicant_name
+                        ?? $application?->applicant?->applicant_name
+                        ?? '-',
+                    'company_name' =>
+                    $application?->business_name
+                        ?? $application?->applicant?->company?->company_name
+                        ?? '-',
+                    'application_type' =>
+                    $application
+                        ? $this->displayLicenseType($application)
+                        : '-',
+                    'payment_type' =>
+                    $invoice->payment_type ?? 'Wang Sekuriti',
+                    'total_amount' =>
+                    (float) $invoice->total_amount,
+                    'amount' =>
+                    (float) $invoice->total_amount,
+                    'invoice_date' =>
+                    optional($invoice->invoice_date)?->format('Y-m-d'),
+                    'due_date' =>
+                    optional($invoice->due_date)?->format('Y-m-d'),
+                    'status' => $invoice->status,
+                    'security_refund_status' =>
+                    $invoice->security_refund_status
+                        ?? 'not_requested',
+                    'security_refund_requested_at' =>
+                    optional(
+                        $invoice->security_refund_requested_at
+                    )?->toDateTimeString(),
+                    'security_refunded_at' =>
+                    optional(
+                        $invoice->security_refunded_at
+                    )?->toDateTimeString(),
+                    'security_refunded_by' =>
+                    $invoice->security_refunded_by,
+                    'security_refund_voucher_no' =>
+                    $invoice->security_refund_voucher_no,
+                    'security_refund_voucher_date' =>
+                    optional(
+                        $invoice->security_refund_voucher_date
+                    )?->format('Y-m-d'),
+                    'security_refund_amount' =>
+                    $invoice->security_refund_amount !== null
+                        ? (float) $invoice->security_refund_amount
+                        : null,
+                    'security_refund_note' =>
+                    $invoice->security_refund_note,
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'success' => true,
+            'data' => $invoices,
+            'security_refunds' => $invoices,
+        ]);
+    }
+
     public function updateSecurityRefundStatus(
         Request $request,
         LsankInvoice $invoice
     ) {
-
         if (!$this->canManageSecurityRefund($request->user())) {
             return response()->json([
                 'success' => false,
@@ -420,19 +508,6 @@ class ApplicationController extends Controller
             ], 403);
         }
 
-        $validated = $request->validate([
-            'security_refund_status' => [
-                'required',
-                'string',
-                'in:pending,refunded',
-            ],
-            'security_refund_note' => [
-                'nullable',
-                'string',
-                'max:2000',
-            ],
-        ]);
-
         if (!$this->isSecurityInvoice($invoice)) {
             return response()->json([
                 'success' => false,
@@ -440,54 +515,186 @@ class ApplicationController extends Controller
             ], 422);
         }
 
+        $validated = $request->validate([
+            'security_refund_status' => [
+                'required',
+                'string',
+                'in:pending,refunded,rejected',
+            ],
+
+            'security_refund_voucher_no' => [
+                'required_if:security_refund_status,refunded',
+                'nullable',
+                'string',
+                'max:100',
+            ],
+
+            'security_refund_voucher_date' => [
+                'required_if:security_refund_status,refunded',
+                'nullable',
+                'date',
+                'before_or_equal:today',
+            ],
+
+            'security_refund_amount' => [
+                'required_if:security_refund_status,refunded',
+                'nullable',
+                'numeric',
+                'min:0.01',
+            ],
+
+            'security_refund_note' => [
+                'required_if:security_refund_status,refunded',
+                'nullable',
+                'string',
+                'max:2000',
+            ],
+        ]);
+
+        $requestedStatus = $validated['security_refund_status'];
+
         if (
-            $validated['security_refund_status'] === 'refunded' &&
-            $invoice->security_refund_status !== 'pending'
+            $requestedStatus === 'refunded'
+            && $invoice->security_refund_status !== 'pending'
         ) {
             return response()->json([
                 'success' => false,
                 'message' =>
-                'User belum membuat permohonan refund sekuriti.',
+                'Pemulangan hanya boleh direkodkan selepas pengguna '
+                    . 'membuat permohonan refund.',
             ], 422);
         }
 
-        $invoice->security_refund_status =
-            $validated['security_refund_status'];
+        if (
+            $requestedStatus === 'refunded'
+            && strtolower(trim((string) $invoice->status)) !== 'paid'
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Invois wang sekuriti belum mempunyai status bayaran paid.',
+            ], 422);
+        }
 
-        $invoice->security_refund_note =
-            $validated['security_refund_note'] ?? null;
+        $refundAmount = isset($validated['security_refund_amount'])
+            ? round((float) $validated['security_refund_amount'], 2)
+            : null;
 
-        if ($validated['security_refund_status'] === 'refunded') {
+        $invoiceAmount = round(
+            (float) ($invoice->total_amount ?? 0),
+            2
+        );
+
+        if (
+            $requestedStatus === 'refunded'
+            && $refundAmount !== null
+            && $refundAmount > $invoiceAmount
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Amaun pemulangan tidak boleh melebihi amaun '
+                    . 'wang sekuriti sebanyak RM '
+                    . number_format($invoiceAmount, 2)
+                    . '.',
+            ], 422);
+        }
+
+        if ($requestedStatus === 'refunded') {
+            $invoice->security_refund_status = 'refunded';
+
+            $invoice->security_refund_voucher_no =
+                trim($validated['security_refund_voucher_no']);
+
+            $invoice->security_refund_voucher_date =
+                $validated['security_refund_voucher_date'];
+
+            $invoice->security_refund_amount =
+                $refundAmount;
+
+            $invoice->security_refund_note =
+                trim($validated['security_refund_note']);
+
             $invoice->security_refunded_at = now();
+
             $invoice->security_refunded_by =
                 $request->user()->user_id;
-        } else {
+        } elseif ($requestedStatus === 'rejected') {
+            $invoice->security_refund_status = 'rejected';
+
+            $invoice->security_refund_note =
+                $validated['security_refund_note'] ?? null;
+
             $invoice->security_refunded_at = null;
             $invoice->security_refunded_by = null;
+
+            $invoice->security_refund_voucher_no = null;
+            $invoice->security_refund_voucher_date = null;
+            $invoice->security_refund_amount = null;
+        } else {
+            $invoice->security_refund_status = 'pending';
+
+            $invoice->security_refund_note =
+                $validated['security_refund_note'] ?? null;
+
+            $invoice->security_refunded_at = null;
+            $invoice->security_refunded_by = null;
+
+            $invoice->security_refund_voucher_no = null;
+            $invoice->security_refund_voucher_date = null;
+            $invoice->security_refund_amount = null;
         }
 
         $invoice->save();
+        $invoice->refresh();
 
         return response()->json([
             'success' => true,
-            'message' =>
-            $invoice->security_refund_status === 'refunded'
-                ? 'Wang sekuriti ditandakan telah dipulangkan.'
-                : 'Status refund wang sekuriti dikemas kini.',
+
+            'message' => match ($invoice->security_refund_status) {
+                'refunded' =>
+                'Wang sekuriti berjaya direkodkan sebagai telah dipulangkan.',
+
+                'rejected' =>
+                'Permohonan pemulangan wang sekuriti telah ditolak.',
+
+                default =>
+                'Status pemulangan wang sekuriti berjaya dikemas kini.',
+            },
+
             'data' => [
-                'invoice_id' => $invoice->invoice_id,
+                'invoice_id' =>
+                $invoice->invoice_id,
+
+                'invoice_no' =>
+                $invoice->invoice_no,
+
                 'security_refund_status' =>
                 $invoice->security_refund_status,
+
                 'security_refund_requested_at' =>
-                optional(
-                    $invoice->security_refund_requested_at
-                )?->toDateTimeString(),
+                optional($invoice->security_refund_requested_at)
+                    ?->toDateTimeString(),
+
                 'security_refunded_at' =>
-                optional(
-                    $invoice->security_refunded_at
-                )?->toDateTimeString(),
+                optional($invoice->security_refunded_at)
+                    ?->toDateTimeString(),
+
                 'security_refunded_by' =>
                 $invoice->security_refunded_by,
+
+                'security_refund_voucher_no' =>
+                $invoice->security_refund_voucher_no,
+
+                'security_refund_voucher_date' =>
+                optional($invoice->security_refund_voucher_date)
+                    ?->format('Y-m-d'),
+
+                'security_refund_amount' =>
+                $invoice->security_refund_amount !== null
+                    ? (float) $invoice->security_refund_amount
+                    : null,
+
                 'security_refund_note' =>
                 $invoice->security_refund_note,
             ],

@@ -420,6 +420,7 @@ class ApplicationController extends Controller
             ->with([
                 'application.applicant.company',
                 'application.type',
+                'receipt.payment',
             ])
             ->whereRaw(
                 'LOWER(payment_type) LIKE ?',
@@ -429,6 +430,7 @@ class ApplicationController extends Controller
             ->get()
             ->map(function (LsankInvoice $invoice) {
                 $application = $invoice->application;
+                $receipt = $invoice->receipt;
 
                 return [
                     'invoice_id' => $invoice->invoice_id,
@@ -484,6 +486,8 @@ class ApplicationController extends Controller
                         : null,
                     'security_refund_note' =>
                     $invoice->security_refund_note,
+                    'receipt_id' => $receipt?->receipt_id,
+                    'receipt_no' => $receipt?->receipt_no ?? '-',
                 ];
             })
             ->values();

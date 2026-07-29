@@ -27,6 +27,7 @@ class LicenseController extends Controller
             ->with([
                 'application',
                 'status',
+                'terminationRequest'
             ])
             ->latest('generated_at')
             ->latest('license_id');
@@ -79,6 +80,7 @@ class LicenseController extends Controller
         $license->load([
             'application',
             'status',
+            'terminationRequest'
         ]);
 
         return response()->json([

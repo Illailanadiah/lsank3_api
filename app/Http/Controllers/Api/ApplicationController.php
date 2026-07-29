@@ -8,6 +8,7 @@ use App\Models\LsankInvoice;
 use App\Models\LsankReceipt;
 use Illuminate\Http\Request;
 use App\Services\LicenseService;
+use App\Models\LsankLicenseTerminationRequest;
 
 class ApplicationController extends Controller
 {
@@ -646,6 +647,39 @@ class ApplicationController extends Controller
         }
 
         $invoice->save();
+        $terminationRequest =
+            LsankLicenseTerminationRequest::query()
+            ->where(
+                'application_id',
+                $invoice->application_id
+            )
+            ->where(
+                'termination_status',
+                'approved'
+            )
+            ->latest('termination_request_id')
+            ->first();
+
+        if ($terminationRequest) {
+            $terminationRequest->forceFill([
+                'security_refund_status' =>
+                $invoice->security_refund_status,
+
+                'security_refund_amount' =>
+                $invoice->security_refund_status === 'refunded'
+                    ? $invoice->total_amount
+                    : $terminationRequest->security_refund_amount,
+
+                'security_refund_note' =>
+                $invoice->security_refund_note,
+
+                'security_refunded_at' =>
+                $invoice->security_refunded_at,
+
+                'security_refunded_by_user_id' =>
+                $invoice->security_refunded_by,
+            ])->save();
+        }
         $invoice->refresh();
 
         return response()->json([

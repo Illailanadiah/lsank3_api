@@ -181,6 +181,12 @@ class RenewalController extends Controller
         $licenses = $query
             ->orderBy('expiry_date')
             ->orderBy('license_id')
+            ->whereDoesntHave('terminationRequest', function ($query) {
+                $query->whereIn('termination_status', [
+                    'pending',
+                    'approved',
+                ]);
+            })
             ->get()
 
             /*

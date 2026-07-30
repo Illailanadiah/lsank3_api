@@ -42,6 +42,7 @@ class RenewalController extends Controller
             ->with([
                 'application',
                 'status',
+                'renewals.application',
             ])
 
             /*
@@ -78,25 +79,12 @@ class RenewalController extends Controller
                 'expiry_date',
                 '<=',
                 $renewalWindowEnd->toDateString()
-            )
+            );
 
-            /*
+        /*
              * Exclude licences that already have an
              * unfinished renewal.
              */
-            ->whereDoesntHave(
-                'renewals',
-                function ($renewalQuery) {
-                    $renewalQuery->whereNotIn(
-                        'renewal_status',
-                        [
-                            LsankRenewalApplication::STATUS_COMPLETED,
-                            LsankRenewalApplication::STATUS_REJECTED,
-                            LsankRenewalApplication::STATUS_CANCELLED,
-                        ]
-                    );
-                }
-            );
 
         /*
          * Optional search used by the Flutter search box.
@@ -193,13 +181,26 @@ class RenewalController extends Controller
              * Run the final model-level check as a second
              * layer of protection.
              */
-            ->filter(
-                fn(LsankLicense $license) =>
-                $license->canBeRenewedBy(
-                    $userId,
-                    self::RENEWAL_WINDOW_DAYS
-                )
-            )
+            ->filter(function (LsankLicense $license) use ($userId) {
+                $activeRenewal = $license->renewals
+                    ->first(function ($renewal) {
+                        return !in_array(
+                            $renewal->renewal_status,
+                            [
+                                LsankRenewalApplication::STATUS_COMPLETED,
+                                LsankRenewalApplication::STATUS_REJECTED,
+                                LsankRenewalApplication::STATUS_CANCELLED,
+                            ],
+                            true
+                        );
+                    });
+
+                return $activeRenewal !== null
+                    || $license->canBeRenewedBy(
+                        $userId,
+                        self::RENEWAL_WINDOW_DAYS
+                    );
+            })
             ->values();
 
         $formattedLicenses = $licenses
@@ -528,9 +529,6 @@ class RenewalController extends Controller
                 'recreation_details' =>
                 $sourceApplication
                     ->recreation_details ?? [],
-
-                'construction_shape' =>
-                $sourceApplication->construction_shape,
             ]);
 
             /*
@@ -581,6 +579,20 @@ class RenewalController extends Controller
         $application = $license->application;
 
         $isExpired = $license->is_expired;
+        $activeRenewal = $license->renewals
+            ->first(function ($renewal) {
+                return !in_array(
+                    $renewal->renewal_status,
+                    [
+                        LsankRenewalApplication::STATUS_COMPLETED,
+                        LsankRenewalApplication::STATUS_REJECTED,
+                        LsankRenewalApplication::STATUS_CANCELLED,
+                    ],
+                    true
+                );
+            });
+
+        $hasActiveRenewal = $activeRenewal !== null;
 
         return [
             'license_id' =>
@@ -634,14 +646,37 @@ class RenewalController extends Controller
             $license->expiry_date?->format('d/m/Y'),
 
             'status' =>
-            $isExpired
-                ? 'Tamat Tempoh'
-                : 'Akan Tamat',
+            $hasActiveRenewal
+                ? 'Dalam Pembaharuan'
+                : (
+                    $isExpired
+                    ? 'Tamat Tempoh'
+                    : 'Akan Tamat'
+                ),
 
             'renewal_state' =>
-            $isExpired
-                ? 'expired'
-                : 'expiring',
+            $hasActiveRenewal
+                ? 'in_progress'
+                : (
+                    $isExpired
+                    ? 'expired'
+                    : 'expiring'
+                ),
+
+            'renewal_id' =>
+            $activeRenewal
+                ? (int) $activeRenewal->renewal_id
+                : null,
+
+            'renewal_application_id' =>
+            $activeRenewal
+                ? (int) $activeRenewal->application_id
+                : null,
+
+            'has_active_renewal' =>
+            $hasActiveRenewal,
+
+            'can_renew' => true,
 
             'days_until_expiry' =>
             $license->days_until_expiry,

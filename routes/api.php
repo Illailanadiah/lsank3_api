@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\EffluentApplicationController;
 use App\Http\Controllers\Api\ApplicationController;
 use App\Http\Controllers\Api\LicenseController;
 use App\Http\Controllers\Api\RenewalController;
+use App\Http\Controllers\Api\BillplzController;
 
 /*
 |--------------------------------------------------------------------------
@@ -25,6 +26,16 @@ Route::prefix('kedah')->group(function () {
     Route::get('/resolve-address', [KedahAddressController::class, 'resolve']);
     Route::get('/search-address', [KedahAddressController::class, 'search']);
 });
+
+Route::post('/billplz/callback', [
+    BillplzController::class,
+    'callback',
+]);
+
+Route::get('/billplz/redirect', [
+    BillplzController::class,
+    'redirect',
+]);
 
 /*
 |--------------------------------------------------------------------------
@@ -294,7 +305,7 @@ Route::middleware('auth:sanctum')->group(function () {
             'adminSecurityRefunds',
         ]
     );
-    
+
     Route::patch(
         '/admin/invoices/{invoice}/security-refund-status',
         [
@@ -382,4 +393,14 @@ Route::middleware('auth:sanctum')->group(function () {
         'generateFromApplication',
     ])->whereNumber('application')
         ->name('licenses.generate');
+
+
+    //Billplz route 
+    Route::post(
+        '/billplz/invoices/{invoice}/create',
+        [
+            BillplzController::class,
+            'createBill',
+        ]
+    )->whereNumber('invoice');
 });

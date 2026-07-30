@@ -141,6 +141,7 @@ class WaterApplicationController extends Controller
                         'due_date' => now()->addDays(14)->toDateString(),
                         'total_amount' => 150,
                         'status' => 'unpaid',
+                        'security_refund_status' => 'not_requested',
                     ])
                 );
             }
@@ -343,6 +344,7 @@ class WaterApplicationController extends Controller
                     'payment_status_display' => 'Sudah Bayar',
                     'paid_at' => now()->toDateTimeString(),
                     'payment_date' => now()->toDateTimeString(),
+                    
                 ],
             ]);
         });

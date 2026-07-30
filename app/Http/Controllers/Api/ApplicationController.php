@@ -1944,10 +1944,7 @@ class ApplicationController extends Controller
 
                     'status' => 'unpaid',
 
-                    'security_refund_status' =>
-                    $feeItem['payment_type'] === 'Wang Sekuriti'
-                        ? 'not_requested'
-                        : null,
+                    'security_refund_status' => 'not_requested',
                 ]);
             } elseif ($invoice->status !== 'paid') {
                 /*
@@ -1964,11 +1961,9 @@ class ApplicationController extends Controller
                     now()->addDays(14)->toDateString();
 
                 $invoice->status = 'unpaid';
-                if ($feeItem['payment_type'] === 'Wang Sekuriti') {
-                    $invoice->security_refund_status =
-                        $invoice->security_refund_status
-                        ?: 'not_requested';
-                }
+                $invoice->security_refund_status =
+                    $invoice->security_refund_status
+                    ?: 'not_requested';
 
                 $invoice->save();
             }

@@ -524,7 +524,7 @@ class ApplicationController extends Controller
             'security_refund_status' => [
                 'required',
                 'string',
-                'in:pending,refunded,rejected',
+                'in:pending,refunded',
             ],
 
             'security_refund_voucher_no' => [
@@ -624,18 +624,6 @@ class ApplicationController extends Controller
 
             $invoice->security_refunded_by =
                 $request->user()->user_id;
-        } elseif ($requestedStatus === 'rejected') {
-            $invoice->security_refund_status = 'rejected';
-
-            $invoice->security_refund_note =
-                $validated['security_refund_note'] ?? null;
-
-            $invoice->security_refunded_at = null;
-            $invoice->security_refunded_by = null;
-
-            $invoice->security_refund_voucher_no = null;
-            $invoice->security_refund_voucher_date = null;
-            $invoice->security_refund_amount = null;
         } else {
             $invoice->security_refund_status = 'pending';
 
@@ -671,7 +659,7 @@ class ApplicationController extends Controller
 
                 'security_refund_amount' =>
                 $invoice->security_refund_status === 'refunded'
-                    ? $invoice->total_amount
+                    ? $invoice->security_refund_amount
                     : $terminationRequest->security_refund_amount,
 
                 'security_refund_note' =>
@@ -1325,6 +1313,19 @@ class ApplicationController extends Controller
                     'security_refund_note' =>
                     $invoice->security_refund_note,
 
+                    'security_refund_voucher_no' =>
+                    $invoice->security_refund_voucher_no,
+
+                    'security_refund_voucher_date' =>
+                    optional(
+                        $invoice->security_refund_voucher_date
+                    )?->format('Y-m-d'),
+
+                    'security_refund_amount' =>
+                    $invoice->security_refund_amount !== null
+                        ? (float) $invoice->security_refund_amount
+                        : null,
+
                     'activity_name' => $activityName,
                     'activity_details' => $activityName,
                 ];
@@ -1499,6 +1500,19 @@ class ApplicationController extends Controller
 
                                 'security_refund_note' =>
                                 $invoice->security_refund_note,
+
+                                'security_refund_voucher_no' =>
+                                $invoice->security_refund_voucher_no,
+
+                                'security_refund_voucher_date' =>
+                                optional(
+                                    $invoice->security_refund_voucher_date
+                                )?->format('Y-m-d'),
+
+                                'security_refund_amount' =>
+                                $invoice->security_refund_amount !== null
+                                    ? (float) $invoice->security_refund_amount
+                                    : null,
 
                                 'application' => $invoiceApplication
                                     ? [
@@ -1930,7 +1944,10 @@ class ApplicationController extends Controller
 
                     'status' => 'unpaid',
 
-                    'security_refund_status' => 'not_requested',
+                    'security_refund_status' =>
+                    $feeItem['payment_type'] === 'Wang Sekuriti'
+                        ? 'not_requested'
+                        : null,
                 ]);
             } elseif ($invoice->status !== 'paid') {
                 /*
@@ -1947,9 +1964,11 @@ class ApplicationController extends Controller
                     now()->addDays(14)->toDateString();
 
                 $invoice->status = 'unpaid';
-                $invoice->security_refund_status =
-                    $invoice->security_refund_status
-                    ?: 'not_requested';
+                if ($feeItem['payment_type'] === 'Wang Sekuriti') {
+                    $invoice->security_refund_status =
+                        $invoice->security_refund_status
+                        ?: 'not_requested';
+                }
 
                 $invoice->save();
             }

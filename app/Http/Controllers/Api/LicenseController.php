@@ -220,32 +220,96 @@ class LicenseController extends Controller
                 $license,
                 $userId
             ) {
-                return LsankLicenseTerminationRequest::create([
-                    'license_id' =>
-                    $license->license_id,
+                $terminationRequest =
+                    LsankLicenseTerminationRequest::create([
+                        'license_id' =>
+                        $license->license_id,
 
-                    'application_id' =>
-                    $license->application_id,
+                        'application_id' =>
+                        $license->application_id,
 
-                    'application_type' =>
-                    $validated['application_type']
-                        ?? null,
+                        'application_type' =>
+                        $validated['application_type']
+                            ?? null,
 
-                    'reason' =>
-                    trim($validated['reason']),
+                        'reason' =>
+                        trim($validated['reason']),
 
-                    'termination_status' =>
-                    'pending',
+                        'termination_status' =>
+                        'pending',
 
-                    'requested_by_user_id' =>
-                    $userId,
+                        'requested_by_user_id' =>
+                        $userId,
 
-                    'requested_at' =>
-                    now(),
+                        'requested_at' =>
+                        now(),
 
-                    'security_refund_status' =>
-                    'not_started',
-                ]);
+                        /*
+                 * Selepas pengguna menekan Mohon Penamatan,
+                 * refund wang sekuriti terus menjadi Dalam Proses.
+                 */
+                        'security_refund_status' =>
+                        'pending',
+                    ]);
+
+                /*
+         * Cari invois Wang Sekuriti bagi permohonan ini.
+         */
+                $securityInvoice = LsankInvoice::query()
+                    ->where(
+                        'application_id',
+                        $license->application_id
+                    )
+                    ->whereRaw(
+                        'LOWER(payment_type) LIKE ?',
+                        ['%sekuriti%']
+                    )
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($securityInvoice) {
+                    /*
+             * Jangan ubah invois yang sudah selesai dipulangkan.
+             */
+                    if (
+                        strtolower(
+                            trim(
+                                (string) $securityInvoice
+                                    ->security_refund_status
+                            )
+                        ) !== 'refunded'
+                    ) {
+                        $securityInvoice->forceFill([
+                            'security_refund_status' =>
+                            'pending',
+
+                            'security_refund_requested_at' =>
+                            now(),
+
+                            'security_refunded_at' =>
+                            null,
+
+                            'security_refunded_by' =>
+                            null,
+
+                            'security_refund_voucher_no' =>
+                            null,
+
+                            'security_refund_voucher_date' =>
+                            null,
+
+                            'security_refund_amount' =>
+                            null,
+
+                            'security_refund_note' =>
+                            'Permohonan pemulangan wang sekuriti '
+                                . 'sedang diproses melalui permohonan '
+                                . 'penamatan lesen.',
+                        ])->save();
+                    }
+                }
+
+                return $terminationRequest;
             }
         );
 
@@ -268,6 +332,9 @@ class LicenseController extends Controller
                 $this->formatTerminationRequest(
                     $terminationRequest
                 ),
+
+                'security_refund_status' =>
+                'pending',
 
                 'license' =>
                 $this->formatLicense($license),
@@ -359,7 +426,9 @@ class LicenseController extends Controller
 
                     $securityInvoice->forceFill([
                         'security_refund_status' => 'pending',
-                        'security_refund_requested_at' => now(),
+                        'security_refund_requested_at' =>
+                        $securityInvoice->security_refund_requested_at
+                            ?? now(),
                         'security_refunded_at' => null,
                         'security_refunded_by' => null,
                         'security_refund_note' =>

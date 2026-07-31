@@ -658,7 +658,6 @@ class RenewalController extends Controller
             'days_until_expiry' =>
             $license->days_until_expiry,
 
-            'can_renew' => true,
         ];
     }
     /**

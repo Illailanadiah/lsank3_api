@@ -755,6 +755,78 @@ class RenewalController extends Controller
         return $newApplicant;
     }
 
+    private function renewalFormAControllers(
+        LsankApplication $sourceApplication
+    ): array {
+        $sourceDraft = is_array($sourceApplication->draft_data)
+            ? $sourceApplication->draft_data
+            : [];
+
+        $sourceControllers = data_get(
+            $sourceDraft,
+            'controllers',
+            []
+        );
+
+        if (!is_array($sourceControllers)) {
+            return [];
+        }
+
+        $allowedExactKeys = [
+            'Nama Pemohon *',
+            'No. Kad Pengenalan *',
+            'No Telefon *',
+            'E-mel *',
+
+            'Nama Syarikat *',
+            'No. Pendaftaran SSM *',
+            'No Telefon Syarikat *',
+            'E-mel Syarikat *',
+
+            'Alamat Pemohon Baris 1 *',
+            'Alamat Pemohon Baris 2',
+            'Daerah *',
+            'Bandar *',
+            'Poskod *',
+            'Negeri *',
+
+            'Alamat Syarikat Baris 1 *',
+            'Alamat Syarikat Baris 2',
+            'Daerah Syarikat *',
+            'Bandar Syarikat *',
+            'Poskod Syarikat *',
+            'Negeri Syarikat *',
+
+            'Nama Perniagaan *',
+            'business_identity_no',
+            'No Telefon Perniagaan *',
+            'E-mel Perniagaan *',
+
+            'Alamat Perniagaan Baris 1 *',
+            'Alamat Perniagaan Baris 2',
+        ];
+
+        $filtered = [];
+
+        foreach ($sourceControllers as $key => $value) {
+            $key = (string) $key;
+
+            $isOfficerField =
+                str_starts_with($key, 'water_officer_name_')
+                || str_starts_with($key, 'water_officer_phone_')
+                || str_starts_with($key, 'water_officer_position_');
+
+            if (
+                in_array($key, $allowedExactKeys, true)
+                || $isOfficerField
+            ) {
+                $filtered[$key] = $value;
+            }
+        }
+
+        return $filtered;
+    }
+
     /**
      * Copy previous form information into the new draft.
      *
@@ -777,17 +849,9 @@ class RenewalController extends Controller
             'completed_steps' => [],
             'agree_terms' => false,
 
-            /*
-         * Maklumat Borang A – pemohon.
-         */
             'applicant_type' =>
             $sourceApplication->applicant_type,
 
-            /*
-         * Jangan salin aktiviti lama sebagai data borang.
-         * selected_activities hanya digunakan untuk
-         * menentukan struktur borang yang perlu dipaparkan.
-         */
             'selected_activities' =>
             $this->resolveRenewalSelectedActivities(
                 $sourceApplication,
@@ -801,21 +865,52 @@ class RenewalController extends Controller
             ),
 
             /*
-         * Pastikan dokumen lama kosong.
-         */
+     * Salin input Borang A sahaja.
+     */
+            'controllers' =>
+            $this->renewalFormAControllers(
+                $sourceApplication
+            ),
+
+            /*
+     * Maklumat pilihan alamat perniagaan.
+     */
+            'selected_business_district' =>
+            data_get(
+                $sourceApplication->draft_data,
+                'selected_business_district'
+            ),
+
+            'selected_business_bandar' =>
+            data_get(
+                $sourceApplication->draft_data,
+                'selected_business_bandar'
+            ),
+
+            'selected_business_poskod' =>
+            data_get(
+                $sourceApplication->draft_data,
+                'selected_business_poskod'
+            ),
+
+            /*
+     * Pegawai Borang A.
+     */
+            'officer_ids' =>
+            data_get(
+                $sourceApplication->draft_data,
+                'officer_ids',
+                [1]
+            ),
+
             'uploaded_documents' => [],
 
             'documents' => [
                 'uploaded_keys' => [],
             ],
 
-            /*
-         * Metadata pembaharuan.
-         */
             'is_renewal' => true,
-
             'prefill_scope' => 'form_a',
-
             'load_uploads' => false,
 
             'renewal_license_id' =>

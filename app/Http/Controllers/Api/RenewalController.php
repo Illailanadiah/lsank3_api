@@ -425,8 +425,11 @@ class RenewalController extends Controller
                 'draft_data' => $draftData,
 
                 /*
-             * Main application information.
-             */
+                * Main application information.
+                */
+                /*
+ * Maklumat utama dan Borang A sahaja.
+ */
                 'applicant_name' =>
                 $sourceApplication->applicant_name,
 
@@ -442,33 +445,23 @@ class RenewalController extends Controller
                 'license_type' =>
                 $sourceApplication->license_type,
 
-                'activity_type' =>
-                $sourceApplication->activity_type,
-
                 'application_type' =>
                 $sourceApplication->application_type,
 
-                'activity_name' =>
-                $sourceApplication->activity_name,
-
-                'district' =>
-                $sourceApplication->district,
-
-                'activity_location' =>
-                $sourceApplication->activity_location,
-
-                'longitude' =>
-                $sourceApplication->longitude,
-
-                'latitude' =>
-                $sourceApplication->latitude,
-
-                'activity_details' =>
-                $sourceApplication->activity_details,
+                /*
+                * Data aktiviti lama tidak disalin.
+                */
+                'activity_type' => null,
+                'activity_name' => null,
+                'district' => null,
+                'activity_location' => null,
+                'longitude' => null,
+                'latitude' => null,
+                'activity_details' => null,
 
                 /*
-             * Applicant information.
-             */
+                * Applicant information.
+                */
                 'applicant_type' =>
                 $sourceApplication->applicant_type,
 
@@ -482,8 +475,8 @@ class RenewalController extends Controller
                 $sourceApplication->address,
 
                 /*
-             * Company information.
-             */
+                * Company information.
+                */
                 'company_name' =>
                 $sourceApplication->company_name,
 
@@ -515,34 +508,18 @@ class RenewalController extends Controller
                 $sourceApplication->officers ?? [],
 
                 /*
-             * Activity-specific information.
-             */
-                'activity_type_id' =>
-                $sourceApplication->activity_type_id,
-
-                'operating_days' =>
-                $sourceApplication->operating_days,
-
-                'operating_time' =>
-                $sourceApplication->operating_time,
-
-                'recreation_details' =>
-                $sourceApplication
-                    ->recreation_details ?? [],
+                * Activity-specific information.
+                */
+                'activity_type_id' => null,
+                'operating_days' => null,
+                'operating_time' => null,
+                'recreation_details' => [],
             ]);
 
             /*
-         * Copy the related Water or Effluent record.
-         */
-            $this->copyActivityRecord(
-                $sourceApplication,
-                $newApplication
-            );
-
-            /*
-         * Connect the old licence with the new
-         * renewal application.
-         */
+            * Connect the old licence with the new
+            * renewal application.
+            */
             $renewal =
                 LsankRenewalApplication::create([
                     'application_id' =>
@@ -789,12 +766,91 @@ class RenewalController extends Controller
         LsankApplication $sourceApplication,
         LsankLicense $license
     ): array {
-        $draftData = is_array(
-            $sourceApplication->draft_data
-        )
-            ? $sourceApplication->draft_data
-            : [];
+        /*
+     * Pembaharuan hanya membawa semula Borang A.
+     *
+     * Data aktiviti, borang teknikal dan fail lama
+     * tidak disalin ke dalam draf pembaharuan.
+     */
+        return [
+            'step' => 0,
+            'current_step' => 0,
+            'completed_steps' => [],
+            'agree_terms' => false,
 
+            /*
+         * Maklumat Borang A – pemohon.
+         */
+            'applicant_type' =>
+            $sourceApplication->applicant_type,
+
+            /*
+         * Jangan salin aktiviti lama sebagai data borang.
+         * selected_activities hanya digunakan untuk
+         * menentukan struktur borang yang perlu dipaparkan.
+         */
+            'selected_activities' =>
+            $this->resolveRenewalSelectedActivities(
+                $sourceApplication,
+                $license
+            ),
+
+            'original_selected_activities' =>
+            $this->resolveRenewalSelectedActivities(
+                $sourceApplication,
+                $license
+            ),
+
+            /*
+         * Pastikan dokumen lama kosong.
+         */
+            'uploaded_documents' => [],
+
+            'documents' => [
+                'uploaded_keys' => [],
+            ],
+
+            /*
+         * Metadata pembaharuan.
+         */
+            'is_renewal' => true,
+
+            'prefill_scope' => 'form_a',
+
+            'load_uploads' => false,
+
+            'renewal_license_id' =>
+            (int) $license->license_id,
+
+            'renewal_license_no' =>
+            (string) $license->license_no,
+
+            'original_application_id' =>
+            (int) $sourceApplication->application_id,
+
+            'meta' => [
+                'step' => 0,
+                'current_step' => 0,
+                'is_renewal' => true,
+                'prefill_scope' => 'form_a',
+                'load_uploads' => false,
+
+                'renewal_license_id' =>
+                (int) $license->license_id,
+
+                'renewal_license_no' =>
+                (string) $license->license_no,
+
+                'original_application_id' =>
+                (int) $sourceApplication->application_id,
+            ],
+        ];
+    }
+
+    private function resolveRenewalSelectedActivities(
+        LsankApplication $sourceApplication,
+        LsankLicense $license
+    ): array {
         $activityName = trim(
             (string) (
                 $license->activity_name
@@ -803,92 +859,11 @@ class RenewalController extends Controller
             )
         );
 
-        $selectedActivities =
-            $activityName !== ''
-            ? [$activityName]
-            : [];
+        if ($activityName === '') {
+            return [];
+        }
 
-        /*
-     * Reset form progress while retaining the
-     * previously entered values.
-     */
-        $draftData['step'] = 0;
-        $draftData['current_step'] = 0;
-        $draftData['completed_steps'] = [];
-        $draftData['agree_terms'] = false;
-
-        /*
-     * Do not treat the renewal as part of the old
-     * split application batch.
-     */
-        unset(
-            $draftData['split_batch_id'],
-            $draftData['split_from_application_id'],
-            $draftData['is_split_parent'],
-            $draftData['is_split_child']
-        );
-
-        $draftData['selected_activities'] =
-            $selectedActivities;
-
-        $draftData['original_selected_activities'] =
-            $selectedActivities;
-
-        $draftData['processing_invoice_activities'] =
-            $selectedActivities;
-
-        /*
-     * Old uploaded documents are not copied to the
-     * new application record.
-     */
-        $draftData['uploaded_documents'] = [];
-
-        $documents = is_array(
-            $draftData['documents'] ?? null
-        )
-            ? $draftData['documents']
-            : [];
-
-        $documents['uploaded_keys'] = [];
-
-        $draftData['documents'] = $documents;
-
-        /*
-     * Store renewal metadata inside the draft.
-     */
-        $draftData['is_renewal'] = true;
-
-        $draftData['renewal_license_id'] =
-            (int) $license->license_id;
-
-        $draftData['renewal_license_no'] =
-            (string) $license->license_no;
-
-        $draftData['original_application_id'] =
-            (int) $sourceApplication->application_id;
-
-        $meta = is_array(
-            $draftData['meta'] ?? null
-        )
-            ? $draftData['meta']
-            : [];
-
-        $meta['step'] = 0;
-        $meta['current_step'] = 0;
-        $meta['is_renewal'] = true;
-
-        $meta['renewal_license_id'] =
-            (int) $license->license_id;
-
-        $meta['renewal_license_no'] =
-            (string) $license->license_no;
-
-        $meta['original_application_id'] =
-            (int) $sourceApplication->application_id;
-
-        $draftData['meta'] = $meta;
-
-        return $draftData;
+        return [$activityName];
     }
 
     /**

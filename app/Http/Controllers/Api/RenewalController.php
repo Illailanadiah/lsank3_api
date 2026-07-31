@@ -624,7 +624,7 @@ class RenewalController extends Controller
 
             'status' =>
             $hasActiveRenewal
-                ? 'Dalam Pembaharuan'
+                ? 'Dalam Proses'
                 : (
                     $isExpired
                     ? 'Tamat Tempoh'

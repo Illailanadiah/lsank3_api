@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\ApplicationController;
 use App\Http\Controllers\Api\LicenseController;
 use App\Http\Controllers\Api\RenewalController;
 use App\Http\Controllers\Api\BillplzController;
+use App\Http\Controllers\Api\AmendmentController;
 
 /*
 |--------------------------------------------------------------------------
@@ -403,4 +404,27 @@ Route::middleware('auth:sanctum')->group(function () {
             'createBill',
         ]
     )->whereNumber('invoice');
+
+    /*
+    |--------------------------------------------------------------------------
+    | License Amendments
+    |--------------------------------------------------------------------------
+    */
+
+    Route::post('/licenses/{licenseId}/amendments/start', [
+        AmendmentController::class,
+        'start',
+    ])
+        ->whereNumber('licenseId')
+        ->name('licenses.amendments.start');
+
+    Route::post(
+        '/license-amendments/{amendmentId}/enable-form-a',
+        [
+            AmendmentController::class,
+            'enableFormA',
+        ]
+    )
+        ->whereNumber('amendmentId')
+        ->name('license-amendments.enable-form-a');
 });

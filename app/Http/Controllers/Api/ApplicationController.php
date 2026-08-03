@@ -9,6 +9,7 @@ use App\Models\LsankReceipt;
 use Illuminate\Http\Request;
 use App\Services\LicenseService;
 use App\Models\LsankLicenseTerminationRequest;
+use App\Models\LsankAmendmentApplication;
 
 class ApplicationController extends Controller
 {
@@ -1696,6 +1697,12 @@ class ApplicationController extends Controller
             return [];
         }
 
+        if ($application->isAmendment()) {
+            return $this->createFinalInvoicesForApprovedAmendment(
+                $application
+            );
+        }
+
         $reviewData = is_array($application->review_data)
             ? $application->review_data
             : [];
@@ -1991,6 +1998,267 @@ class ApplicationController extends Controller
 
         $application->review_data = $reviewData;
         $application->save();
+
+        return $createdInvoices;
+    }
+
+    private function createFinalInvoicesForApprovedAmendment(
+        LsankApplication $application
+    ): array {
+        $draftData = is_array($application->draft_data)
+            ? $application->draft_data
+            : [];
+
+        $amendmentId = (int) (
+            $draftData['amendment_id']
+            ?? data_get($draftData, 'amendment.amendment_id')
+            ?? data_get($draftData, 'meta.amendment_id')
+            ?? 0
+        );
+
+        $amendment = LsankAmendmentApplication::query()
+            ->where(
+                'application_id',
+                $application->application_id
+            )
+            ->first();
+
+        if (!$amendment && $amendmentId > 0) {
+            $amendment = LsankAmendmentApplication::query()
+                ->find($amendmentId);
+
+            if ($amendment) {
+                $amendment->application_id =
+                    $application->application_id;
+
+                $amendment->save();
+            }
+        }
+
+        if (!$amendment) {
+            throw new \RuntimeException(
+                'Rekod pindaan lesen tidak dijumpai.'
+            );
+        }
+
+        $reviewData = is_array($application->review_data)
+            ? $application->review_data
+            : [];
+
+        $newInformation = is_array($amendment->new_information)
+            ? $amendment->new_information
+            : [];
+
+        $meta = is_array($newInformation['meta'] ?? null)
+            ? $newInformation['meta']
+            : [];
+
+        $formAEditEnabled = filter_var(
+            $meta['form_a_edit_enabled']
+                ?? data_get(
+                    $draftData,
+                    'amendment.form_a_edit_enabled'
+                )
+                ?? data_get(
+                    $draftData,
+                    'meta.form_a_edit_enabled'
+                )
+                ?? false,
+            FILTER_VALIDATE_BOOLEAN
+        );
+
+        $storedAmendmentFee = $this->moneyValue(
+            $meta['information_amendment_fee']
+                ?? data_get(
+                    $draftData,
+                    'amendment.information_amendment_fee'
+                )
+                ?? data_get(
+                    $draftData,
+                    'meta.information_amendment_fee'
+                )
+                ?? 0
+        );
+
+        $amendmentFee = $formAEditEnabled
+            ? max(50, $storedAmendmentFee)
+            : 0;
+
+        $chargeFee = $this->moneyValue(
+            $reviewData['invoice_fee_caj']
+                ?? $meta['incremental_charge_fee']
+                ?? 0
+        );
+
+        /*
+     * Buang invois salah yang dijana menggunakan
+     * flow permohonan lesen baharu.
+     *
+     * Invois yang sudah dibayar tidak disentuh.
+     */
+        LsankInvoice::query()
+            ->where(
+                'application_id',
+                $application->application_id
+            )
+            ->whereIn('payment_type', [
+                'Fi Lesen',
+                'Wang Sekuriti',
+                'Fi Sekuriti',
+            ])
+            ->where('status', '!=', 'paid')
+            ->delete();
+
+        $reviewData['invoice_fee_lesen'] = 0;
+        $reviewData['invoice_fee_sekuriti'] = 0;
+        $reviewData['invoice_fee_pindaan'] = $amendmentFee;
+        $reviewData['invoice_fee_caj'] = $chargeFee;
+
+        $meta['information_amendment_fee'] = $amendmentFee;
+        $meta['incremental_charge_fee'] = $chargeFee;
+
+        $feeItems = collect([
+            [
+                'payment_type' => 'Fi Pindaan Maklumat',
+                'fee_code' => '05',
+                'amount' => $amendmentFee,
+            ],
+            [
+                'payment_type' => 'Fi Caj',
+                'fee_code' => '03',
+                'amount' => $chargeFee,
+            ],
+        ])
+            ->filter(
+                fn(array $item) => $item['amount'] > 0
+            )
+            ->values();
+
+        if ($feeItems->isEmpty()) {
+            $reviewData['final_invoice_status'] = 'no_fee';
+            $reviewData['final_invoice_ids'] = [];
+            $reviewData['final_invoice_nos'] = [];
+
+            $application->review_data = $reviewData;
+            $application->save();
+
+            $meta['approved_at'] = now()->toDateTimeString();
+            $newInformation['meta'] = $meta;
+
+            $amendment->new_information = $newInformation;
+            $amendment->status =
+                LsankAmendmentApplication::STATUS_APPROVED_PENDING_PAYMENT;
+
+            $amendment->save();
+
+            return [];
+        }
+
+        $createdInvoices = [];
+        $nextRunningNumber = $this->nextInvoiceRunningNumber();
+
+        foreach ($feeItems as $index => $feeItem) {
+            $invoice = LsankInvoice::query()
+                ->where(
+                    'application_id',
+                    $application->application_id
+                )
+                ->where(
+                    'payment_type',
+                    $feeItem['payment_type']
+                )
+                ->first();
+
+            if (!$invoice) {
+                $invoice = LsankInvoice::create([
+                    'application_id' =>
+                    $application->application_id,
+
+                    /*
+                 * Terus paut kepada lesen asal.
+                 */
+                    'license_id' =>
+                    $amendment->license_id,
+
+                    'user_id' =>
+                    $application->user_id,
+
+                    'invoice_no' =>
+                    $this->generateInvoiceNoByRunningNumber(
+                        $nextRunningNumber + $index,
+                        $feeItem['fee_code']
+                    ),
+
+                    'payment_type' =>
+                    $feeItem['payment_type'],
+
+                    'invoice_date' =>
+                    now()->toDateString(),
+
+                    'due_date' =>
+                    now()->addDays(14)->toDateString(),
+
+                    'total_amount' =>
+                    $feeItem['amount'],
+
+                    'status' => 'unpaid',
+
+                    'security_refund_status' =>
+                    'not_applicable',
+                ]);
+            } elseif ($invoice->status !== 'paid') {
+                $invoice->forceFill([
+                    'license_id' =>
+                    $amendment->license_id,
+
+                    'total_amount' =>
+                    $feeItem['amount'],
+
+                    'invoice_date' =>
+                    now()->toDateString(),
+
+                    'due_date' =>
+                    now()->addDays(14)->toDateString(),
+
+                    'status' => 'unpaid',
+
+                    'security_refund_status' =>
+                    'not_applicable',
+                ])->save();
+            }
+
+            $createdInvoices[] = $invoice;
+        }
+
+        $reviewData['final_invoice_status'] =
+            'pending_payment';
+
+        $reviewData['final_invoice_ids'] =
+            collect($createdInvoices)
+            ->pluck('invoice_id')
+            ->values()
+            ->all();
+
+        $reviewData['final_invoice_nos'] =
+            collect($createdInvoices)
+            ->pluck('invoice_no')
+            ->values()
+            ->all();
+
+        $application->payment_status =
+            LsankApplication::PAYMENT_MENUNGGU_BAYARAN;
+
+        $application->review_data = $reviewData;
+        $application->save();
+
+        $meta['approved_at'] = now()->toDateTimeString();
+        $newInformation['meta'] = $meta;
+
+        $amendment->new_information = $newInformation;
+        $amendment->status =
+            LsankAmendmentApplication::STATUS_APPROVED_PENDING_PAYMENT;
+
+        $amendment->save();
 
         return $createdInvoices;
     }

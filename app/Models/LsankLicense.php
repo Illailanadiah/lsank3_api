@@ -4,7 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use App\Models\LsankLicenseTerminationRequest; 
+use App\Models\LsankLicenseTerminationRequest;
+use App\Models\LsankAmendmentApplication;
 
 class LsankLicense extends Model
 {
@@ -269,5 +270,40 @@ class LsankLicense extends Model
     public function getCanDownloadQrAttribute(): bool
     {
         return $this->qr_downloaded_at === null;
+    }
+
+    public function amendments()
+    {
+        return $this->hasMany(
+            LsankAmendmentApplication::class,
+            'license_id',
+            'license_id'
+        );
+    }
+
+    public function activeAmendment()
+    {
+        return $this->hasOne(
+            LsankAmendmentApplication::class,
+            'license_id',
+            'license_id'
+        )
+            ->whereNotIn('status', [
+                LsankAmendmentApplication::STATUS_COMPLETED,
+                LsankAmendmentApplication::STATUS_REJECTED,
+                LsankAmendmentApplication::STATUS_CANCELLED,
+            ])
+            ->latestOfMany('amendment_id');
+    }
+
+    public function hasOpenAmendment(): bool
+    {
+        return $this->amendments()
+            ->whereNotIn('status', [
+                LsankAmendmentApplication::STATUS_COMPLETED,
+                LsankAmendmentApplication::STATUS_REJECTED,
+                LsankAmendmentApplication::STATUS_CANCELLED,
+            ])
+            ->exists();
     }
 }

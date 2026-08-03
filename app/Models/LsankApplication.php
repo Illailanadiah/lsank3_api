@@ -297,4 +297,27 @@ class LsankApplication extends Model
         return $this->isApproved()
             && $this->workflowStage() === 'director_approved';
     }
+
+    public function amendment()
+    {
+        return $this->hasOne(
+            LsankAmendmentApplication::class,
+            'application_id',
+            'application_id'
+        );
+    }
+
+    public function sourceAmendments()
+    {
+        return $this->hasMany(
+            LsankAmendmentApplication::class,
+            'source_application_id',
+            'application_id'
+        );
+    }
+
+    public function isAmendment(): bool
+    {
+        return $this->application_category === 'amendment';
+    }
 }

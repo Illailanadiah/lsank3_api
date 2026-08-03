@@ -1020,14 +1020,20 @@ class ApplicationController extends Controller
      * Fi Lesen, Fi Caj dan Wang Sekuriti.
      * Oleh itu lesen boleh dijana terus selepas kelulusan.
      */
-            if ($finalInvoiceStatus === 'exempt') {
+            if (in_array(
+                $finalInvoiceStatus,
+                ['exempt', 'no_fee'],
+                true
+            )) {
                 $license =
                     $licenseService->generateForApprovedApplication(
                         $fresh
                     );
 
                 $latestReviewData['license_generation_status'] =
-                    'generated';
+                    $fresh->isAmendment()
+                    ? 'updated'
+                    : 'generated';
 
                 $latestReviewData['license_id'] =
                     $license->license_id;
@@ -1035,8 +1041,9 @@ class ApplicationController extends Controller
                 $latestReviewData['license_no'] =
                     $license->license_no;
 
-                $latestReviewData['license_generated_at'] =
-                    now()->toDateTimeString();
+                $latestReviewData[$fresh->isAmendment()
+                    ? 'license_updated_at'
+                    : 'license_generated_at'] = now()->toDateTimeString();
 
                 $fresh->review_data = $latestReviewData;
                 $fresh->save();

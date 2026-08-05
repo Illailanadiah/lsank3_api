@@ -36,6 +36,11 @@ return [
     ],
 
     'billplz' => [
+        
+        //nanti buang
+        'enabled' => env('BILLPLZ_ENABLED', false),
+        //
+
         'api_url' => env(
             'BILLPLZ_API_URL',
             'https://www.billplz.com/api'
@@ -43,9 +48,13 @@ return [
 
         'secret_key' => env('BILLPLZ_SECRET_KEY'),
 
-        'x_signature_key' => env('BILLPLZ_X_SIGNATURE_KEY'),
+        'x_signature_key' => env(
+            'BILLPLZ_X_SIGNATURE_KEY'
+        ),
 
-        'collection_id' => env('BILLPLZ_COLLECTION_ID'),
+        'collection_id' => env(
+            'BILLPLZ_COLLECTION_ID'
+        ),
     ],
 
     'google_maps' => [

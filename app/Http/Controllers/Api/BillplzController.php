@@ -16,7 +16,19 @@ class BillplzController extends Controller
     public function createBill(
         Request $request,
         LsankInvoice $invoice
-    ) {
+    ) { 
+        
+    //nanti buang
+        if (!config('services.billplz.enabled')) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Payment gateway Billplz sedang dinyahaktifkan sementara untuk tujuan pengujian sistem.',
+            ], 503);
+        }
+    //
+
+
         /*
          * Pastikan invois milik pengguna yang sedang login.
          */

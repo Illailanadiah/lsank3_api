@@ -7,11 +7,205 @@ use App\Models\LsankUser;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+
 
 class AuthController extends Controller
 {
+    private function verifyMobileRecaptcha(
+        Request $request,
+        string $expectedAction
+    ): ?\Illuminate\Http\JsonResponse {
+        $request->validate([
+            'recaptcha_token' => 'required|string',
+            'recaptcha_platform' => 'required|in:mobile',
+        ]);
+
+        $projectId = env(
+            'RECAPTCHA_GOOGLE_CLOUD_PROJECT_ID'
+        );
+
+        $apiKey = env(
+            'RECAPTCHA_ENTERPRISE_API_KEY'
+        );
+
+        if (empty($projectId) || empty($apiKey)) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Konfigurasi reCAPTCHA mobile belum lengkap.',
+            ], 500);
+        }
+
+        $response = Http::acceptJson()
+            ->timeout(15)
+            ->post(
+                "https://recaptchaenterprise.googleapis.com/"
+                    . "v1/projects/{$projectId}/assessments"
+                    . "?key={$apiKey}",
+                [
+                    'event' => [
+                        'token' => $request->recaptcha_token,
+                        'expectedAction' => $expectedAction,
+                        'userIpAddress' => $request->ip(),
+                        'userAgent' => $request->userAgent(),
+                    ],
+                ]
+            );
+
+        if (!$response->successful()) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Google tidak dapat mengesahkan reCAPTCHA mobile.',
+                'google_error' => app()->isLocal()
+                    ? $response->json()
+                    : null,
+            ], 503);
+        }
+
+        $result = $response->json();
+
+        Log::info('Mobile reCAPTCHA', $result);
+
+        $valid = (
+            $result['tokenProperties']['valid'] ?? false
+        ) === true;
+
+        $action = $result['tokenProperties']['action'] ?? '';
+
+        $score = (float) (
+            $result['riskAnalysis']['score'] ?? 0
+        );
+
+        $minimumScore = (float) env(
+            'RECAPTCHA_MIN_SCORE',
+            0.5
+        );
+
+        if (
+            !$valid ||
+            $action !== $expectedAction ||
+            $score < $minimumScore
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Pengesahan keselamatan mobile gagal.',
+                'recaptcha' => app()->isLocal()
+                    ? [
+                        'valid' => $valid,
+                        'action' => $action,
+                        'score' => $score,
+                        'invalid_reason' =>
+                        $result['tokenProperties']['invalidReason'] ?? null,
+                    ]
+                    : null,
+            ], 422);
+        }
+
+        return null;
+    }
+
+    private function verifyRecaptchaRequest(
+        Request $request,
+        string $expectedAction
+    ): ?\Illuminate\Http\JsonResponse {
+        if ($request->recaptcha_platform === 'mobile') {
+            return $this->verifyMobileRecaptcha(
+                $request,
+                $expectedAction
+            );
+        }
+
+        return $this->verifyRecaptcha(
+            $request,
+            $expectedAction
+        );
+    }
+
+    private function verifyRecaptcha(
+        Request $request,
+        string $expectedAction
+    ): ?\Illuminate\Http\JsonResponse {
+        $request->validate([
+            'recaptcha_token' => 'required|string',
+        ]);
+
+        $secretKey = env('RECAPTCHA_SECRET_KEY');
+
+        if (empty($secretKey)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Konfigurasi reCAPTCHA belum lengkap.',
+            ], 500);
+        }
+
+        try {
+            $response = Http::asForm()
+                ->timeout(10)
+                ->post(
+                    'https://www.google.com/recaptcha/api/siteverify',
+                    [
+                        'secret' => $secretKey,
+                        'response' => $request->recaptcha_token,
+                        'remoteip' => $request->ip(),
+                    ]
+                );
+
+            if (!$response->successful()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Pengesahan reCAPTCHA gagal dihubungi.',
+                ], 503);
+            }
+
+            $result = $response->json();
+
+            $success = ($result['success'] ?? false) === true;
+            $action = $result['action'] ?? '';
+            $score = (float) ($result['score'] ?? 0);
+
+            if (
+                !$success ||
+                $action !== $expectedAction ||
+                $score < 0.5
+            ) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Pengesahan keselamatan gagal. Sila cuba semula.',
+                    'recaptcha' => [
+                        'success' => $success,
+                        'action' => $action,
+                        'score' => $score,
+                        'error_codes' => $result['error-codes'] ?? [],
+                    ],
+                ], 422);
+            }
+
+            return null;
+        } catch (\Throwable $error) {
+            report($error);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ralat semasa mengesahkan reCAPTCHA.',
+            ], 500);
+        }
+    }
+
     public function register(Request $request)
     {
+        $recaptchaError = $this->verifyRecaptchaRequest(
+            $request,
+            'signup'
+        );
+
+        if ($recaptchaError) {
+            return $recaptchaError;
+        }
+
         $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|email|unique:lsank_users,email',
@@ -42,14 +236,29 @@ class AuthController extends Controller
 
     public function login(Request $request)
     {
+        $recaptchaError = $this->verifyRecaptchaRequest(
+            $request,
+            'login'
+        );
+
+        if ($recaptchaError) {
+            return $recaptchaError;
+        }
+
         $request->validate([
             'email' => 'required|email',
             'password' => 'required|string',
         ]);
 
-        $user = LsankUser::where('email', $request->email)->first();
+        $user = LsankUser::where(
+            'email',
+            $request->email
+        )->first();
 
-        if (!$user || !Hash::check($request->password, $user->password)) {
+        if (
+            !$user ||
+            !Hash::check($request->password, $user->password)
+        ) {
             throw ValidationException::withMessages([
                 'email' => ['Invalid email or password.'],
             ]);
@@ -62,7 +271,9 @@ class AuthController extends Controller
             ], 403);
         }
 
-        $token = $user->createToken('lsank3_token')->plainTextToken;
+        $token = $user
+            ->createToken('lsank3_token')
+            ->plainTextToken;
 
         return response()->json([
             'success' => true,

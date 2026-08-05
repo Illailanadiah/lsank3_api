@@ -38,7 +38,7 @@ return [
     'billplz' => [
         'api_url' => env(
             'BILLPLZ_API_URL',
-            'https://www.billplz-sandbox.com/api'
+            'https://www.billplz.com/api'
         ),
 
         'secret_key' => env('BILLPLZ_SECRET_KEY'),
@@ -46,6 +46,15 @@ return [
         'x_signature_key' => env('BILLPLZ_X_SIGNATURE_KEY'),
 
         'collection_id' => env('BILLPLZ_COLLECTION_ID'),
+    ],
+
+    'google_maps' => [
+        'api_key' => env('GOOGLE_MAPS_API_KEY'),
+    ],
+
+    'recaptcha' => [
+        'secret_key' => env('RECAPTCHA_SECRET_KEY'),
+        'minimum_score' => (float) env('RECAPTCHA_MIN_SCORE', 0.5),
     ],
 
 ];

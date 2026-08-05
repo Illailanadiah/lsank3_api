@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\LicenseController;
 use App\Http\Controllers\Api\RenewalController;
 use App\Http\Controllers\Api\BillplzController;
 use App\Http\Controllers\Api\AmendmentController;
+use App\Http\Controllers\Api\GoogleMapsController;
 
 /*
 |--------------------------------------------------------------------------
@@ -37,6 +38,11 @@ Route::get('/billplz/redirect', [
     BillplzController::class,
     'redirect',
 ]);
+
+Route::get(
+    '/billplz/invoices/{invoice}/status',
+    [BillplzController::class, 'status']
+)->whereNumber('invoice');
 
 /*
 |--------------------------------------------------------------------------
@@ -73,6 +79,17 @@ Route::middleware('auth:sanctum')->group(function () {
         AuthController::class,
         'updateAdminProfile',
     ]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Google Maps
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/maps/reverse-geocode', [
+        GoogleMapsController::class,
+        'reverseGeocode',
+    ])->name('maps.reverse-geocode');
 
     /*
     |--------------------------------------------------------------------------

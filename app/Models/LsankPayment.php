@@ -20,11 +20,21 @@ class LsankPayment extends Model
         'payment_status',
         'payment_date',
         'transaction_ref_no',
+
+        'billplz_bill_id',
+        'billplz_payment_url',
+        'billplz_create_response',
+        'billplz_callback_payload',
+        'billplz_callback_received_at',
     ];
 
     protected $casts = [
         'amount' => 'decimal:2',
         'payment_date' => 'datetime',
+
+        'billplz_create_response' => 'array',
+        'billplz_callback_payload' => 'array',
+        'billplz_callback_received_at' => 'datetime',
     ];
 
     public function invoice()

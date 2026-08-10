@@ -27,44 +27,45 @@ class AuthController extends Controller
     */
 
     private function verifyRecaptchaRequest(
-    Request $request,
-    string $expectedAction
-): ?JsonResponse {
-    /*
-    |--------------------------------------------------------------------------
-    | Local Development
-    |--------------------------------------------------------------------------
-    |
-    | Jangan verify reCAPTCHA untuk localhost.
-    | Production/staging tetap wajib verify.
-    |
-    */
+        Request $request,
+        string $expectedAction
+    ): ?JsonResponse {
+        /*
+        |--------------------------------------------------------------------------
+        | Local Development
+        |--------------------------------------------------------------------------
+        |
+        | Jangan verify reCAPTCHA untuk localhost.
+        | Production/staging tetap wajib verify.
+        |
+        */
 
-    if (app()->isLocal()) {
-        Log::debug('reCAPTCHA bypassed for local environment.', [
-            'action' => $expectedAction,
-            'host' => $request->getHost(),
-        ]);
+        if (app()->isLocal()) {
+            Log::debug('reCAPTCHA bypassed for local environment.', [
+                'action' => $expectedAction,
+                'host' => $request->getHost(),
+            ]);
 
-        return null;
-    }
+            return null;
+        }
 
-    $platform = strtolower(
-        trim((string) $request->input('recaptcha_platform', 'web'))
-    );
+        $platform = strtolower(
+            trim((string) $request->input('recaptcha_platform', 'web'))
+        );
 
-    if ($platform === 'mobile') {
-        return $this->verifyMobileRecaptcha(
+        if ($platform === 'mobile') {
+            return $this->verifyMobileRecaptcha(
+                $request,
+                $expectedAction
+            );
+        }
+
+        return $this->verifyWebRecaptcha(
             $request,
             $expectedAction
         );
     }
 
-    return $this->verifyWebRecaptcha(
-        $request,
-        $expectedAction
-    );
-}
     private function verifyMobileRecaptcha(
         Request $request,
         string $expectedAction
@@ -72,9 +73,7 @@ class AuthController extends Controller
         $request->validate([
             'recaptcha_token' => ['required', 'string'],
             'recaptcha_platform' => ['required', 'in:mobile'],
-            'recaptcha_token' => 'required|string',
-            'recaptcha_platform' => 'required|in:mobile',
-            'mobile_platform' => 'required|in:android,ios',
+            'mobile_platform' => ['required', 'in:android,ios'],
         ]);
 
         $projectId = env('RECAPTCHA_GOOGLE_CLOUD_PROJECT_ID');
@@ -100,13 +99,13 @@ class AuthController extends Controller
                 ->timeout(15)
                 ->post(
                     'https://recaptchaenterprise.googleapis.com/'
-                    "https://recaptchaenterprise.googleapis.com/"
                         . "v1/projects/{$projectId}/assessments"
                         . "?key={$apiKey}",
                     [
                         'event' => [
-                            'token' => $request->string('recaptcha_token')->toString(),
-                            'token' => $request->recaptcha_token,
+                            'token' => $request
+                                ->string('recaptcha_token')
+                                ->toString(),
                             'siteKey' => $siteKey,
                             'expectedAction' => $expectedAction,
                             'userIpAddress' => $request->ip(),
@@ -118,12 +117,8 @@ class AuthController extends Controller
             if (!$response->successful()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Google tidak dapat mengesahkan reCAPTCHA mobile.',
                     'message' =>
-                    'Google tidak dapat mengesahkan reCAPTCHA mobile.',
-                    'google_error' => app()->isLocal()
-                        ? $response->json()
-                        : null,
+                        'Google tidak dapat mengesahkan reCAPTCHA mobile.',
                 ], 503);
             }
 
@@ -141,13 +136,6 @@ class AuthController extends Controller
             $action = (string) (
                 $result['tokenProperties']['action'] ?? ''
             );
-            Log::info('Mobile reCAPTCHA', $result);
-
-            $valid =
-                ($result['tokenProperties']['valid'] ?? false) === true;
-
-            $action =
-                $result['tokenProperties']['action'] ?? '';
 
             $score = (float) (
                 $result['riskAnalysis']['score'] ?? 0
@@ -166,45 +154,6 @@ class AuthController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'Pengesahan keselamatan mobile gagal.',
-                    'recaptcha' => app()->isLocal()
-                        ? [
-                            'valid' => $valid,
-                            'action' => $action,
-                            'score' => $score,
-                            'minimum_score' => $minimumScore,
-                            'invalid_reason' =>
-                                $result['tokenProperties']['invalidReason']
-                                ?? null,
-                        ]
-                        : null,
-                ], 422);
-            }
-
-            return null;
-        } catch (\Throwable $error) {
-            report($error);
-
-            if (
-                !$valid ||
-                $action !== $expectedAction ||
-                (
-                    !app()->isLocal() &&
-                    $score < $minimumScore
-                )
-            ) {
-                return response()->json([
-                    'success' => false,
-                    'message' =>
-                    'Pengesahan keselamatan mobile gagal.',
-                    'recaptcha' => app()->isLocal()
-                        ? [
-                            'valid' => $valid,
-                            'action' => $action,
-                            'score' => $score,
-                            'invalid_reason' =>
-                            $result['tokenProperties']['invalidReason'] ?? null,
-                        ]
-                        : null,
                 ], 422);
             }
 
@@ -215,14 +164,7 @@ class AuthController extends Controller
             return response()->json([
                 'success' => false,
                 'message' =>
-                'Ralat semasa mengesahkan reCAPTCHA mobile.',
-            ], 500);
-        }
-    }
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Ralat semasa mengesahkan reCAPTCHA mobile.',
+                    'Ralat semasa mengesahkan reCAPTCHA mobile.',
             ], 500);
         }
     }

@@ -72,12 +72,23 @@ class AuthController extends Controller
         $request->validate([
             'recaptcha_token' => ['required', 'string'],
             'recaptcha_platform' => ['required', 'in:mobile'],
+            'recaptcha_token' => 'required|string',
+            'recaptcha_platform' => 'required|in:mobile',
+            'mobile_platform' => 'required|in:android,ios',
         ]);
 
         $projectId = env('RECAPTCHA_GOOGLE_CLOUD_PROJECT_ID');
         $apiKey = env('RECAPTCHA_ENTERPRISE_API_KEY');
 
-        if (empty($projectId) || empty($apiKey)) {
+        $siteKey = $request->mobile_platform === 'android'
+            ? env('RECAPTCHA_ANDROID_SITE_KEY')
+            : env('RECAPTCHA_IOS_SITE_KEY');
+
+        if (
+            empty($projectId) ||
+            empty($apiKey) ||
+            empty($siteKey)
+        ) {
             return response()->json([
                 'success' => false,
                 'message' => 'Konfigurasi reCAPTCHA mobile belum lengkap.',
@@ -89,11 +100,14 @@ class AuthController extends Controller
                 ->timeout(15)
                 ->post(
                     'https://recaptchaenterprise.googleapis.com/'
+                    "https://recaptchaenterprise.googleapis.com/"
                         . "v1/projects/{$projectId}/assessments"
                         . "?key={$apiKey}",
                     [
                         'event' => [
                             'token' => $request->string('recaptcha_token')->toString(),
+                            'token' => $request->recaptcha_token,
+                            'siteKey' => $siteKey,
                             'expectedAction' => $expectedAction,
                             'userIpAddress' => $request->ip(),
                             'userAgent' => $request->userAgent(),
@@ -105,6 +119,8 @@ class AuthController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'Google tidak dapat mengesahkan reCAPTCHA mobile.',
+                    'message' =>
+                    'Google tidak dapat mengesahkan reCAPTCHA mobile.',
                     'google_error' => app()->isLocal()
                         ? $response->json()
                         : null,
@@ -125,6 +141,13 @@ class AuthController extends Controller
             $action = (string) (
                 $result['tokenProperties']['action'] ?? ''
             );
+            Log::info('Mobile reCAPTCHA', $result);
+
+            $valid =
+                ($result['tokenProperties']['valid'] ?? false) === true;
+
+            $action =
+                $result['tokenProperties']['action'] ?? '';
 
             $score = (float) (
                 $result['riskAnalysis']['score'] ?? 0
@@ -160,6 +183,42 @@ class AuthController extends Controller
             return null;
         } catch (\Throwable $error) {
             report($error);
+
+            if (
+                !$valid ||
+                $action !== $expectedAction ||
+                (
+                    !app()->isLocal() &&
+                    $score < $minimumScore
+                )
+            ) {
+                return response()->json([
+                    'success' => false,
+                    'message' =>
+                    'Pengesahan keselamatan mobile gagal.',
+                    'recaptcha' => app()->isLocal()
+                        ? [
+                            'valid' => $valid,
+                            'action' => $action,
+                            'score' => $score,
+                            'invalid_reason' =>
+                            $result['tokenProperties']['invalidReason'] ?? null,
+                        ]
+                        : null,
+                ], 422);
+            }
+
+            return null;
+        } catch (\Throwable $error) {
+            report($error);
+
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Ralat semasa mengesahkan reCAPTCHA mobile.',
+            ], 500);
+        }
+    }
 
             return response()->json([
                 'success' => false,

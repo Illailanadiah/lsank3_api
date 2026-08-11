@@ -539,14 +539,24 @@ class LicenseController extends Controller
                 ->first();
 
             if ($existingLicense) {
-                $this->ensureArtifacts($existingLicense);
+    $existingLicense->forceFill([
+        'activity_location' =>
+            $this->resolveActivityLocation($application),
 
-                return $existingLicense->fresh([
-                    'application',
-                    'status',
-                ]);
-            }
+        'latitude' =>
+            $this->resolveLatitude($application),
 
+        'longitude' =>
+            $this->resolveLongitude($application),
+    ])->save();
+
+    $this->ensureArtifacts($existingLicense);
+
+    return $existingLicense->fresh([
+        'application',
+        'status',
+    ]);
+}
             $activeStatusId = $this->activeLicenseStatusId();
 
             $licenseStartDate = data_get(
@@ -829,7 +839,9 @@ class LicenseController extends Controller
             'holder_name' => $license->holder_name,
             'license_type' => $license->license_type,
             'activity_name' => $license->activity_name,
-            'activity_location' => $license->activity_location,
+'activity_location' => $license->activity_location,
+'latitude' => $license->latitude,
+'longitude' => $license->longitude,
             'start_date' => optional(
                 $license->start_date
             )?->format('Y-m-d'),
@@ -1044,6 +1056,42 @@ class LicenseController extends Controller
         ));
     }
 
+    private function resolveLatitude(
+    LsankApplication $application
+): ?float {
+    $value = $application->latitude;
+
+    if ($value === null || $value === '') {
+        return null;
+    }
+
+    $latitude = (float) $value;
+
+    if ($latitude < -90 || $latitude > 90) {
+        return null;
+    }
+
+    return $latitude;
+}
+
+private function resolveLongitude(
+    LsankApplication $application
+): ?float {
+    $value = $application->longitude;
+
+    if ($value === null || $value === '') {
+        return null;
+    }
+
+    $longitude = (float) $value;
+
+    if ($longitude < -180 || $longitude > 180) {
+        return null;
+    }
+
+    return $longitude;
+}
+
     private function parseJsonMap(
         mixed $value
     ): array {
@@ -1246,8 +1294,12 @@ class LicenseController extends Controller
             'holder_name' => $license->holder_name,
             'license_type' => $license->license_type,
             'activity_name' => $license->activity_name,
-            'activity_location' => $license->activity_location,
-            'start_date' => optional(
+'activity_location' => $license->activity_location,
+
+'latitude' => $license->latitude,
+'longitude' => $license->longitude,
+
+'start_date' => optional(
                 $license->start_date
             )?->format('Y-m-d'),
             'expiry_date' => optional(

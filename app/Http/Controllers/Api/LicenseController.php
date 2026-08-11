@@ -585,6 +585,8 @@ class LicenseController extends Controller
                 'activity_location' => $this->resolveActivityLocation(
                     $application
                 ),
+                'latitude' => $application->latitude,
+                'longitude' => $application->longitude,
                 'start_date' => $licenseStartDate,
                 'expiry_date' => $licenseEndDate,
                 'license_status_id' => $activeStatusId,

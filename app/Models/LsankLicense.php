@@ -29,6 +29,8 @@ class LsankLicense extends Model
         'license_type',
         'activity_name',
         'activity_location',
+        'latitude',
+        'longitude',
         'start_date',
         'expiry_date',
         'license_status_id',

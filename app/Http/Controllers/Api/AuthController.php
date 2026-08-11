@@ -4,133 +4,178 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\LsankUser;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
-    private function verifyMobileRecaptcha(
-        Request $request,
-        string $expectedAction
-    ): ?\Illuminate\Http\JsonResponse {
-        $request->validate([
-            'recaptcha_token' => 'required|string',
-            'recaptcha_platform' => 'required|in:mobile',
-        ]);
-
-        $projectId = env(
-            'RECAPTCHA_GOOGLE_CLOUD_PROJECT_ID'
-        );
-
-        $apiKey = env(
-            'RECAPTCHA_ENTERPRISE_API_KEY'
-        );
-
-        if (empty($projectId) || empty($apiKey)) {
-            return response()->json([
-                'success' => false,
-                'message' =>
-                'Konfigurasi reCAPTCHA mobile belum lengkap.',
-            ], 500);
-        }
-
-        $response = Http::acceptJson()
-            ->timeout(15)
-            ->post(
-                "https://recaptchaenterprise.googleapis.com/"
-                    . "v1/projects/{$projectId}/assessments"
-                    . "?key={$apiKey}",
-                [
-                    'event' => [
-                        'token' => $request->recaptcha_token,
-                        'expectedAction' => $expectedAction,
-                        'userIpAddress' => $request->ip(),
-                        'userAgent' => $request->userAgent(),
-                    ],
-                ]
-            );
-
-        if (!$response->successful()) {
-            return response()->json([
-                'success' => false,
-                'message' =>
-                'Google tidak dapat mengesahkan reCAPTCHA mobile.',
-                'google_error' => app()->isLocal()
-                    ? $response->json()
-                    : null,
-            ], 503);
-        }
-
-        $result = $response->json();
-
-        Log::info('Mobile reCAPTCHA', $result);
-
-        $valid = (
-            $result['tokenProperties']['valid'] ?? false
-        ) === true;
-
-        $action = $result['tokenProperties']['action'] ?? '';
-
-        $score = (float) (
-            $result['riskAnalysis']['score'] ?? 0
-        );
-
-        $minimumScore = (float) env(
-            'RECAPTCHA_MIN_SCORE',
-            0.5
-        );
-
-        if (
-            !$valid ||
-            $action !== $expectedAction ||
-            $score < $minimumScore
-        ) {
-            return response()->json([
-                'success' => false,
-                'message' =>
-                'Pengesahan keselamatan mobile gagal.',
-                'recaptcha' => app()->isLocal()
-                    ? [
-                        'valid' => $valid,
-                        'action' => $action,
-                        'score' => $score,
-                        'invalid_reason' =>
-                        $result['tokenProperties']['invalidReason'] ?? null,
-                    ]
-                    : null,
-            ], 422);
-        }
-
-        return null;
-    }
+    /*
+    |--------------------------------------------------------------------------
+    | reCAPTCHA Verification
+    |--------------------------------------------------------------------------
+    |
+    | - Web uses Google reCAPTCHA siteverify.
+    | - Mobile uses reCAPTCHA Enterprise assessment.
+    | - On local environment only, verification is bypassed when no token is
+    |   supplied. If a token is supplied locally, it will still be verified.
+    |
+    */
 
     private function verifyRecaptchaRequest(
         Request $request,
         string $expectedAction
-    ): ?\Illuminate\Http\JsonResponse {
-        if ($request->recaptcha_platform === 'mobile') {
+    ): ?JsonResponse {
+        /*
+        |--------------------------------------------------------------------------
+        | Local Development
+        |--------------------------------------------------------------------------
+        |
+        | Jangan verify reCAPTCHA untuk localhost.
+        | Production/staging tetap wajib verify.
+        |
+        */
+
+        if (app()->isLocal()) {
+            Log::debug('reCAPTCHA bypassed for local environment.', [
+                'action' => $expectedAction,
+                'host' => $request->getHost(),
+            ]);
+
+            return null;
+        }
+
+        $platform = strtolower(
+            trim((string) $request->input('recaptcha_platform', 'web'))
+        );
+
+        if ($platform === 'mobile') {
             return $this->verifyMobileRecaptcha(
                 $request,
                 $expectedAction
             );
         }
 
-        return $this->verifyRecaptcha(
+        return $this->verifyWebRecaptcha(
             $request,
             $expectedAction
         );
     }
 
-    private function verifyRecaptcha(
+    private function verifyMobileRecaptcha(
         Request $request,
         string $expectedAction
-    ): ?\Illuminate\Http\JsonResponse {
+    ): ?JsonResponse {
         $request->validate([
-            'recaptcha_token' => 'required|string',
+            'recaptcha_token' => ['required', 'string'],
+            'recaptcha_platform' => ['required', 'in:mobile'],
+            'mobile_platform' => ['required', 'in:android,ios'],
+        ]);
+
+        $projectId = env('RECAPTCHA_GOOGLE_CLOUD_PROJECT_ID');
+        $apiKey = env('RECAPTCHA_ENTERPRISE_API_KEY');
+
+        $siteKey = $request->mobile_platform === 'android'
+            ? env('RECAPTCHA_ANDROID_SITE_KEY')
+            : env('RECAPTCHA_IOS_SITE_KEY');
+
+        if (
+            empty($projectId) ||
+            empty($apiKey) ||
+            empty($siteKey)
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Konfigurasi reCAPTCHA mobile belum lengkap.',
+            ], 500);
+        }
+
+        try {
+            $response = Http::acceptJson()
+                ->timeout(15)
+                ->post(
+                    'https://recaptchaenterprise.googleapis.com/'
+                        . "v1/projects/{$projectId}/assessments"
+                        . "?key={$apiKey}",
+                    [
+                        'event' => [
+                            'token' => $request
+                                ->string('recaptcha_token')
+                                ->toString(),
+                            'siteKey' => $siteKey,
+                            'expectedAction' => $expectedAction,
+                            'userIpAddress' => $request->ip(),
+                            'userAgent' => $request->userAgent(),
+                        ],
+                    ]
+                );
+
+            if (!$response->successful()) {
+                return response()->json([
+                    'success' => false,
+                    'message' =>
+                        'Google tidak dapat mengesahkan reCAPTCHA mobile.',
+                ], 503);
+            }
+
+            $result = $response->json();
+
+            Log::info('Mobile reCAPTCHA verification', [
+                'expected_action' => $expectedAction,
+                'result' => $result,
+            ]);
+
+            $valid = (
+                $result['tokenProperties']['valid'] ?? false
+            ) === true;
+
+            $action = (string) (
+                $result['tokenProperties']['action'] ?? ''
+            );
+
+            $score = (float) (
+                $result['riskAnalysis']['score'] ?? 0
+            );
+
+            $minimumScore = (float) env(
+                'RECAPTCHA_MIN_SCORE',
+                0.5
+            );
+
+            if (
+                !$valid ||
+                $action !== $expectedAction ||
+                $score < $minimumScore
+            ) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Pengesahan keselamatan mobile gagal.',
+                ], 422);
+            }
+
+            return null;
+        } catch (\Throwable $error) {
+            report($error);
+
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'Ralat semasa mengesahkan reCAPTCHA mobile.',
+            ], 500);
+        }
+    }
+
+    private function verifyWebRecaptcha(
+        Request $request,
+        string $expectedAction
+    ): ?JsonResponse {
+        $request->validate([
+            'recaptcha_token' => ['required', 'string'],
+            'recaptcha_platform' => ['nullable', 'in:web'],
         ]);
 
         $secretKey = env('RECAPTCHA_SECRET_KEY');
@@ -138,7 +183,7 @@ class AuthController extends Controller
         if (empty($secretKey)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Konfigurasi reCAPTCHA belum lengkap.',
+                'message' => 'Konfigurasi reCAPTCHA web belum lengkap.',
             ], 500);
         }
 
@@ -149,7 +194,7 @@ class AuthController extends Controller
                     'https://www.google.com/recaptcha/api/siteverify',
                     [
                         'secret' => $secretKey,
-                        'response' => $request->recaptcha_token,
+                        'response' => $request->string('recaptcha_token')->toString(),
                         'remoteip' => $request->ip(),
                     ]
                 );
@@ -163,24 +208,33 @@ class AuthController extends Controller
 
             $result = $response->json();
 
+            Log::info('Web reCAPTCHA verification', [
+                'expected_action' => $expectedAction,
+                'result' => $result,
+            ]);
+
             $success = ($result['success'] ?? false) === true;
-            $action = $result['action'] ?? '';
+            $action = (string) ($result['action'] ?? '');
             $score = (float) ($result['score'] ?? 0);
+            $minimumScore = (float) env('RECAPTCHA_MIN_SCORE', 0.5);
 
             if (
                 !$success ||
                 $action !== $expectedAction ||
-                $score < 0.5
+                $score < $minimumScore
             ) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Pengesahan keselamatan gagal. Sila cuba semula.',
-                    'recaptcha' => [
-                        'success' => $success,
-                        'action' => $action,
-                        'score' => $score,
-                        'error_codes' => $result['error-codes'] ?? [],
-                    ],
+                    'recaptcha' => app()->isLocal()
+                        ? [
+                            'success' => $success,
+                            'action' => $action,
+                            'score' => $score,
+                            'minimum_score' => $minimumScore,
+                            'error_codes' => $result['error-codes'] ?? [],
+                        ]
+                        : null,
                 ], 422);
             }
 
@@ -190,100 +244,134 @@ class AuthController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ralat semasa mengesahkan reCAPTCHA.',
+                'message' => 'Ralat semasa mengesahkan reCAPTCHA web.',
             ], 500);
         }
     }
 
-    public function register(Request $request)
-    {
-        $recaptchaError = $this->verifyRecaptchaRequest(
-            $request,
-            'signup'
-        );
+    /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    */
 
-        if ($recaptchaError) {
-            return $recaptchaError;
-        }
-
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'required|email|unique:lsank_users,email',
-            'phone' => 'nullable|string|max:30',
-            'ic_no' => 'nullable|string|max:20|unique:lsank_users,ic_no',
-            'password' => 'required|string|min:6',
-        ]);
-
-        $user = LsankUser::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'phone' => $request->phone,
-            'password' => Hash::make($request->password),
-            'ic_no' => $request->ic_no,
-            'user_type' => 'Pengguna',
-            'status' => 'active',
-        ]);
-
-        $token = $user->createToken('lsank3_token')->plainTextToken;
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Registration successful',
-            'token' => $token,
-            'user' => $user,
-        ], 201);
-    }
-
-    public function login(Request $request)
-    {
-        $recaptchaError = $this->verifyRecaptchaRequest(
-            $request,
-            'login'
-        );
-
-        if ($recaptchaError) {
-            return $recaptchaError;
-        }
-
-        $request->validate([
-            'email' => 'required|email',
-            'password' => 'required|string',
-        ]);
-
-        $user = LsankUser::where(
+   public function register(Request $request): JsonResponse
+{
+    $validated = $request->validate([
+        'name' => ['required', 'string', 'max:255'],
+        'email' => [
+            'required',
             'email',
-            $request->email
-        )->first();
+            'max:255',
+            'unique:lsank_users,email',
+        ],
+        'phone' => ['nullable', 'string', 'max:30'],
+        'ic_no' => [
+            'nullable',
+            'string',
+            'max:20',
+            'unique:lsank_users,ic_no',
+        ],
+        'password' => ['required', 'string', 'min:6'],
 
-        if (
-            !$user ||
-            !Hash::check($request->password, $user->password)
-        ) {
-            throw ValidationException::withMessages([
-                'email' => ['Invalid email or password.'],
-            ]);
-        }
+        'recaptcha_token' => ['nullable', 'string'],
+        'recaptcha_platform' => ['nullable', 'in:web,mobile'],
+    ]);
 
-        if ($user->status !== 'active') {
-            return response()->json([
-                'success' => false,
-                'message' => 'Your account is not active.',
-            ], 403);
-        }
+    $recaptchaError = $this->verifyRecaptchaRequest(
+        $request,
+        'signup'
+    );
 
-        $token = $user
-            ->createToken('lsank3_token')
-            ->plainTextToken;
+    if ($recaptchaError) {
+        return $recaptchaError;
+    }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Login successful',
-            'token' => $token,
-            'user' => $user,
+    $user = LsankUser::create([
+        'name' => trim($validated['name']),
+        'email' => strtolower(trim($validated['email'])),
+        'phone' => isset($validated['phone'])
+            ? trim($validated['phone'])
+            : null,
+        'ic_no' => isset($validated['ic_no'])
+            ? $this->normalizeIc($validated['ic_no'])
+            : null,
+        'password' => Hash::make($validated['password']),
+        'user_type' => 'Pengguna',
+        'status' => 'active',
+    ]);
+
+    $token = $user
+        ->createToken('lsank3_token')
+        ->plainTextToken;
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Registration successful.',
+        'token' => $token,
+        'user' => $user,
+    ], 201);
+}
+
+   public function login(Request $request): JsonResponse
+{
+    $validated = $request->validate([
+        'email' => ['required', 'email'],
+        'password' => ['required', 'string'],
+
+        // Optional pada validation awal.
+        // Production akan diwajibkan dalam verifyWebRecaptcha /
+        // verifyMobileRecaptcha.
+        'recaptcha_token' => ['nullable', 'string'],
+        'recaptcha_platform' => ['nullable', 'in:web,mobile'],
+    ]);
+
+    $recaptchaError = $this->verifyRecaptchaRequest(
+        $request,
+        'login'
+    );
+
+    if ($recaptchaError) {
+        return $recaptchaError;
+    }
+
+    $email = strtolower(trim($validated['email']));
+
+    $user = LsankUser::query()
+        ->whereRaw('LOWER(email) = ?', [$email])
+        ->first();
+
+    if (
+        !$user ||
+        !Hash::check($validated['password'], $user->password)
+    ) {
+        throw ValidationException::withMessages([
+            'email' => ['E-mel atau kata laluan tidak sah.'],
         ]);
     }
 
-    public function profile(Request $request)
+    if (
+        strtolower(trim((string) $user->status)) !== 'active'
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Akaun anda tidak aktif.',
+        ], 403);
+    }
+
+    $token = $user
+        ->createToken('lsank3_token')
+        ->plainTextToken;
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Login berjaya.',
+        'token' => $token,
+        'user' => $user,
+    ]);
+}
+
+    public function profile(Request $request): JsonResponse
     {
         return response()->json([
             'success' => true,
@@ -291,51 +379,57 @@ class AuthController extends Controller
         ]);
     }
 
-    public function logout(Request $request)
+    public function logout(Request $request): JsonResponse
     {
-        $request->user()->currentAccessToken()->delete();
+        $request->user()?->currentAccessToken()?->delete();
 
         return response()->json([
             'success' => true,
-            'message' => 'Logout successful',
+            'message' => 'Logout berjaya.',
         ]);
     }
 
-    public function updatePhone(Request $request)
+    public function updatePhone(Request $request): JsonResponse
     {
-        $request->validate([
-            'phone' => 'required|string|max:30',
+        $validated = $request->validate([
+            'phone' => ['required', 'string', 'max:30'],
         ]);
 
         $user = $request->user();
-        $user->phone = $request->phone;
+        $user->phone = trim($validated['phone']);
         $user->save();
 
         return response()->json([
             'success' => true,
-            'message' => 'Phone number updated successfully',
-            'user' => $user,
+            'message' => 'Nombor telefon berjaya dikemaskini.',
+            'user' => $user->fresh(),
         ]);
     }
 
-    public function updateAdminProfile(Request $request)
+    public function updateAdminProfile(Request $request): JsonResponse
     {
-        $request->validate([
-            'phone' => 'required|string|max:30',
+        $validated = $request->validate([
+            'phone' => ['required', 'string', 'max:30'],
         ]);
 
         $user = $request->user();
-        $user->phone = $request->phone;
+        $user->phone = trim($validated['phone']);
         $user->save();
 
         return response()->json([
             'success' => true,
-            'message' => 'Admin profile updated successfully',
-            'user' => $user,
+            'message' => 'Profil pentadbir berjaya dikemaskini.',
+            'user' => $user->fresh(),
         ]);
     }
 
-    public function users(Request $request)
+    /*
+    |--------------------------------------------------------------------------
+    | User Management
+    |--------------------------------------------------------------------------
+    */
+
+    public function users(Request $request): JsonResponse
     {
         $users = LsankUser::query()
             ->select(
@@ -346,7 +440,8 @@ class AuthController extends Controller
                 'phone',
                 'user_type',
                 'status',
-                'created_at'
+                'created_at',
+                'updated_at'
             )
             ->orderByDesc('created_at')
             ->get();
@@ -357,69 +452,84 @@ class AuthController extends Controller
         ]);
     }
 
-    public function createUser(Request $request)
+    public function createUser(Request $request): JsonResponse
     {
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'required|email|unique:lsank_users,email',
-            'phone' => 'nullable|string|max:30',
-            'ic_no' => 'required|string|max:20|unique:lsank_users,ic_no',
-            'user_type' => 'required|string',
-            'password' => 'required|string|min:6',
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'email' => [
+                'required',
+                'email',
+                'max:255',
+                'unique:lsank_users,email',
+            ],
+            'phone' => ['nullable', 'string', 'max:30'],
+            'ic_no' => [
+                'required',
+                'string',
+                'max:20',
+                'unique:lsank_users,ic_no',
+            ],
+            'user_type' => ['required', 'string', 'max:100'],
+            'password' => ['required', 'string', 'min:8'],
         ]);
 
         $user = LsankUser::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'phone' => $request->phone,
-            'ic_no' => $request->ic_no,
-            'password' => Hash::make($request->password),
-            'user_type' => $request->user_type,
+            'name' => trim($validated['name']),
+            'email' => strtolower(trim($validated['email'])),
+            'phone' => isset($validated['phone'])
+                ? trim($validated['phone'])
+                : null,
+            'ic_no' => $this->normalizeIc($validated['ic_no']),
+            'password' => Hash::make($validated['password']),
+            'user_type' => trim($validated['user_type']),
             'status' => 'active',
         ]);
 
         return response()->json([
             'success' => true,
-            'message' => 'Pengguna berjaya ditambah',
+            'message' => 'Pengguna berjaya ditambah.',
             'data' => $user,
         ], 201);
     }
 
-    public function updateUser(Request $request, string $userId)
-    {
-        $user = LsankUser::find($userId);
+    public function updateUser(
+        Request $request,
+        int $userId
+    ): JsonResponse {
+        $user = $this->findUserById($userId);
 
         if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Pengguna tidak dijumpai.',
-            ], 404);
+            return $this->userNotFoundResponse();
         }
 
         $validated = $request->validate([
-            'name' => 'required|string|max:255',
+            'name' => ['required', 'string', 'max:255'],
             'email' => [
                 'required',
                 'email',
                 'max:255',
-                'unique:lsank_users,email,' . $user->user_id . ',user_id',
+                Rule::unique('lsank_users', 'email')
+                    ->ignore($userId, 'user_id'),
             ],
-            'phone' => 'nullable|string|max:30',
+            'phone' => ['nullable', 'string', 'max:30'],
             'ic_no' => [
                 'required',
                 'string',
                 'max:20',
-                'unique:lsank_users,ic_no,' . $user->user_id . ',user_id',
+                Rule::unique('lsank_users', 'ic_no')
+                    ->ignore($userId, 'user_id'),
             ],
-            'user_type' => 'required|string|max:100',
-            'password' => 'nullable|string|min:8',
+            'user_type' => ['required', 'string', 'max:100'],
+            'password' => ['nullable', 'string', 'min:8'],
         ]);
 
-        $user->name = $validated['name'];
-        $user->email = strtolower($validated['email']);
-        $user->phone = $validated['phone'] ?? null;
-        $user->ic_no = $validated['ic_no'];
-        $user->user_type = $validated['user_type'];
+        $user->name = trim($validated['name']);
+        $user->email = strtolower(trim($validated['email']));
+        $user->phone = isset($validated['phone'])
+            ? trim($validated['phone'])
+            : null;
+        $user->ic_no = $this->normalizeIc($validated['ic_no']);
+        $user->user_type = trim($validated['user_type']);
 
         if (!empty($validated['password'])) {
             $user->password = Hash::make($validated['password']);
@@ -430,78 +540,74 @@ class AuthController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Maklumat pengguna berjaya dikemaskini.',
-            'data' => $user->only([
-                'user_id',
-                'name',
-                'ic_no',
-                'email',
-                'phone',
-                'user_type',
-                'status',
-                'created_at',
-            ]),
+            'data' => $user->fresh(),
         ]);
     }
 
-    public function deleteUser(Request $request, string $userId)
-    {
-        $currentUser = $request->user();
+    public function deleteUser(
+        Request $request,
+        int $userId
+    ): JsonResponse {
+        $user = $this->findUserById($userId);
 
-        if ((string) $currentUser->user_id === (string) $userId) {
+        if (!$user) {
+            return $this->userNotFoundResponse();
+        }
+
+        $authenticatedUserId = (string) (
+            $request->user()?->user_id
+            ?? $request->user()?->getKey()
+            ?? ''
+        );
+
+        if ($authenticatedUserId === (string) $userId) {
             return response()->json([
                 'success' => false,
                 'message' => 'Anda tidak boleh menyahaktifkan akaun sendiri.',
             ], 422);
         }
 
-        $user = LsankUser::find($userId);
-
-        if (!$user) {
+        if (
+            strtolower(trim((string) $user->status)) === 'inactive'
+        ) {
             return response()->json([
-                'success' => false,
-                'message' => 'Pengguna tidak dijumpai.',
-            ], 404);
-        }
-
-        if ($user->status === 'inactive') {
-            return response()->json([
-                'success' => false,
-                'message' => 'Akaun pengguna ini telah dinyahaktifkan.',
-            ], 422);
+                'success' => true,
+                'message' => 'Akaun pengguna telah pun dinyahaktifkan.',
+                'data' => $user,
+            ]);
         }
 
         $user->status = 'inactive';
         $user->save();
 
-        // Batalkan semua token login pengguna.
+        // Revoke all active Sanctum tokens immediately.
         $user->tokens()->delete();
 
         return response()->json([
             'success' => true,
             'message' => 'Akaun pengguna berjaya dinyahaktifkan.',
-            'data' => [
-                'user_id' => $user->user_id,
-                'status' => $user->status,
-            ],
+            'data' => $user->fresh(),
         ]);
     }
 
-    public function activateUser(Request $request, string $userId)
-    {
-        $user = LsankUser::find($userId);
+    public function activateUser(
+        Request $request,
+        int $userId
+    ): JsonResponse {
+        $user = $this->findUserById($userId);
 
         if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Pengguna tidak dijumpai.',
-            ], 404);
+            return $this->userNotFoundResponse();
         }
 
-        if ($user->status === 'active') {
+        if (
+            strtolower(trim((string) $user->status)) === 'active'
+        ) {
             return response()->json([
-                'success' => false,
-                'message' => 'Akaun pengguna ini sudah aktif.',
-            ], 422);
+                'success' => true,
+                'message' => 'Akaun pengguna telah pun aktif.',
+                'data' => $user,
+            ]);
         }
 
         $user->status = 'active';
@@ -510,10 +616,33 @@ class AuthController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Akaun pengguna berjaya diaktifkan semula.',
-            'data' => [
-                'user_id' => $user->user_id,
-                'status' => $user->status,
-            ],
+            'data' => $user->fresh(),
         ]);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Helpers
+    |--------------------------------------------------------------------------
+    */
+
+    private function findUserById(int $userId): ?LsankUser
+    {
+        return LsankUser::query()
+            ->where('user_id', $userId)
+            ->first();
+    }
+
+    private function normalizeIc(string $value): string
+    {
+        return preg_replace('/\D+/', '', trim($value)) ?? '';
+    }
+
+    private function userNotFoundResponse(): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'message' => 'Pengguna tidak dijumpai.',
+        ], 404);
     }
 }

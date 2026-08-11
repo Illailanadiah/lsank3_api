@@ -592,20 +592,12 @@ class LicenseController extends Controller
                 'holder_name' => $this->resolveHolderName($application),
                 'license_type' => $this->resolveLicenseType($application),
                 'activity_name' => $this->resolveActivityName($application),
-
-'activity_location' => $this->resolveActivityLocation(
-    $application
-),
-
-'latitude' => $this->resolveLatitude(
-    $application
-),
-
-'longitude' => $this->resolveLongitude(
-    $application
-),
-
-'start_date' => $licenseStartDate,
+                'activity_location' => $this->resolveActivityLocation(
+                    $application
+                ),
+                'latitude' => $application->latitude,
+                'longitude' => $application->longitude,
+                'start_date' => $licenseStartDate,
                 'expiry_date' => $licenseEndDate,
                 'license_status_id' => $activeStatusId,
                 'qr_token' => $qrToken,

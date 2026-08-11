@@ -8,6 +8,10 @@ use App\Http\Controllers\Api\WaterApplicationController;
 use App\Http\Controllers\Api\EffluentApplicationController;
 use App\Http\Controllers\Api\ApplicationController;
 use App\Http\Controllers\Api\LicenseController;
+use App\Http\Controllers\Api\RenewalController;
+use App\Http\Controllers\Api\BillplzController;
+use App\Http\Controllers\Api\AmendmentController;
+use App\Http\Controllers\Api\GoogleMapsController;
 
 /*
 |--------------------------------------------------------------------------
@@ -25,10 +29,29 @@ Route::prefix('kedah')->group(function () {
     Route::get('/search-address', [KedahAddressController::class, 'search']);
 });
 
+Route::post('/billplz/callback', [
+    BillplzController::class,
+    'callback',
+]);
+
+Route::get('/billplz/redirect', [
+    BillplzController::class,
+    'redirect',
+]);
+
+Route::get(
+    '/billplz/invoices/{invoice}/status',
+    [BillplzController::class, 'status']
+)->whereNumber('invoice');
+
 /*
 |--------------------------------------------------------------------------
 | Public License Verification
 |--------------------------------------------------------------------------
+|
+| This route must remain outside auth:sanctum so anyone scanning the QR code
+| can verify the license.
+|
 */
 
 Route::get('/licenses/verify/{token}', [
@@ -56,6 +79,17 @@ Route::middleware('auth:sanctum')->group(function () {
         AuthController::class,
         'updateAdminProfile',
     ]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Google Maps
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/maps/reverse-geocode', [
+        GoogleMapsController::class,
+        'reverseGeocode',
+    ])->name('maps.reverse-geocode');
 
     /*
     |--------------------------------------------------------------------------
@@ -92,6 +126,10 @@ Route::middleware('auth:sanctum')->group(function () {
     |--------------------------------------------------------------------------
     | User Side - Water Applications
     |--------------------------------------------------------------------------
+    |
+    | Status flow:
+    | draf -> fi_pemprosesan -> dalam_proses -> lulus / gagal
+    |
     */
 
     Route::prefix('applications/water')->group(function () {
@@ -113,6 +151,22 @@ Route::middleware('auth:sanctum')->group(function () {
             WaterApplicationController::class,
             'pay',
         ]);
+
+        Route::post('/{application}/invoices/{invoice}/pay', [
+            WaterApplicationController::class,
+            'payInvoice',
+        ])->whereNumber('application')
+            ->whereNumber('invoice');
+
+        Route::post(
+            '/{application}/final-invoices/{invoice}/pay',
+            [
+                WaterApplicationController::class,
+                'payFinalInvoice',
+            ]
+        )
+            ->whereNumber('application')
+            ->whereNumber('invoice');
 
         Route::delete('/{application}/draft', [
             WaterApplicationController::class,
@@ -159,6 +213,12 @@ Route::middleware('auth:sanctum')->group(function () {
             'pay',
         ]);
 
+        Route::post('/{application}/invoices/{invoice}/pay', [
+            EffluentApplicationController::class,
+            'payInvoice',
+        ])->whereNumber('application')
+            ->whereNumber('invoice');
+
         Route::delete('/{application}/draft', [
             EffluentApplicationController::class,
             'destroyDraft',
@@ -188,8 +248,26 @@ Route::middleware('auth:sanctum')->group(function () {
 
     /*
     |--------------------------------------------------------------------------
+    | User Side - Security Refund
+    |--------------------------------------------------------------------------
+    */
+
+    Route::post('/invoices/{invoice}/security-refund/request', [
+        ApplicationController::class,
+        'requestSecurityRefund',
+    ])->whereNumber('invoice');
+
+    /*
+    |--------------------------------------------------------------------------
     | Admin Side - Applications
     |--------------------------------------------------------------------------
+    |
+    | Admin should see:
+    | dalam_proses, lulus, gagal
+    |
+    | Admin should not see:
+    | draf, fi_pemprosesan
+    |
     */
 
     Route::get('/admin/applications', [
@@ -234,11 +312,60 @@ Route::middleware('auth:sanctum')->group(function () {
 
     /*
     |--------------------------------------------------------------------------
+    | Admin Side - Security Refund
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get(
+        '/admin/invoices/security-refunds',
+        [
+            ApplicationController::class,
+            'adminSecurityRefunds',
+        ]
+    );
+
+    Route::patch(
+        '/admin/invoices/{invoice}/security-refund-status',
+        [
+            ApplicationController::class,
+            'updateSecurityRefundStatus',
+        ],
+    )->whereNumber('invoice');
+
+    /*
+    |--------------------------------------------------------------------------
     | Licenses
     |--------------------------------------------------------------------------
     */
 
+    Route::patch(
+        '/admin/licenses/{license}/termination/approve',
+        [
+            LicenseController::class,
+            'approveTermination',
+        ]
+    )->whereNumber('license')
+        ->name('admin.licenses.termination.approve');
+
     Route::prefix('licenses')->group(function () {
+
+        Route::get('/renewals/eligible', [
+            RenewalController::class,
+            'eligible',
+        ])->name('licenses.renewals.eligible');
+
+        Route::post('/{licenseId}/renewals/start', [
+            RenewalController::class,
+            'start',
+        ])->whereNumber('licenseId')
+            ->name('licenses.renewals.start');
+
+        Route::post('/{license}/termination-request', [
+            LicenseController::class,
+            'requestTermination',
+        ])->whereNumber('license')
+            ->name('licenses.termination-request');
+
         Route::get('/', [
             LicenseController::class,
             'index',
@@ -273,6 +400,10 @@ Route::middleware('auth:sanctum')->group(function () {
     |--------------------------------------------------------------------------
     | Manual License Generation
     |--------------------------------------------------------------------------
+    |
+    | This is useful for testing or regenerating old approved applications.
+    | The controller is idempotent: one application produces one license.
+    |
     */
 
     Route::post('/applications/{application}/generate-license', [
@@ -280,4 +411,37 @@ Route::middleware('auth:sanctum')->group(function () {
         'generateFromApplication',
     ])->whereNumber('application')
         ->name('licenses.generate');
+
+
+    //Billplz route 
+    Route::post(
+        '/billplz/invoices/{invoice}/create',
+        [
+            BillplzController::class,
+            'createBill',
+        ]
+    )->whereNumber('invoice');
+
+    /*
+    |--------------------------------------------------------------------------
+    | License Amendments
+    |--------------------------------------------------------------------------
+    */
+
+    Route::post('/licenses/{licenseId}/amendments/start', [
+        AmendmentController::class,
+        'start',
+    ])
+        ->whereNumber('licenseId')
+        ->name('licenses.amendments.start');
+
+    Route::post(
+        '/license-amendments/{amendmentId}/enable-form-a',
+        [
+            AmendmentController::class,
+            'enableFormA',
+        ]
+    )
+        ->whereNumber('amendmentId')
+        ->name('license-amendments.enable-form-a');
 });

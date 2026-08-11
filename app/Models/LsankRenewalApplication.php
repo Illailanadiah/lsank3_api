@@ -11,6 +11,7 @@ class LsankRenewalApplication extends Model
     protected $primaryKey = 'renewal_id';
 
     public const STATUS_DRAFT = 'draft';
+    public const STATUS_IN_PROCESS = 'in_process';
     public const STATUS_COMPLETED = 'completed';
     public const STATUS_REJECTED = 'rejected';
     public const STATUS_CANCELLED = 'cancelled';

@@ -517,6 +517,17 @@ class RenewalController extends Controller
             ]);
 
             /*
+            * Salin rekod teknikal asal ke draf pembaharuan.
+            *
+            * UI masih hanya prefill Borang A kerana
+            * draft_data menggunakan prefill_scope = form_a.
+            */
+            $this->copyActivityRecord(
+                $sourceApplication,
+                $newApplication
+            );
+
+            /*
             * Connect the old licence with the new
             * renewal application.
             */

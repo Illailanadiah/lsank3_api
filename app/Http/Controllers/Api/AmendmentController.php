@@ -8,6 +8,7 @@ use App\Models\LsankAmendmentApplication;
 use App\Models\LsankApplicant;
 use App\Models\LsankApplication;
 use App\Models\LsankCompany;
+use App\Models\LsankEffluentApplication;
 use App\Models\LsankLicense;
 use App\Models\LsankWaterBodyApplication;
 use Illuminate\Http\Request;
@@ -43,8 +44,9 @@ class AmendmentController extends Controller
         ) {
             $license = LsankLicense::query()
                 ->with([
-                    'application.applicant.company',
+                    'application.applicant.company.officers',
                     'application.waterBody',
+                    'application.effluent.serviceType',
                     'application.documents',
                 ])
                 ->lockForUpdate()
@@ -63,12 +65,21 @@ class AmendmentController extends Controller
 
             $sourceApplication = $license->application;
 
-            if (!$sourceApplication->isWaterApplication()) {
+            $isWaterApplication =
+                $sourceApplication->isWaterApplication();
+
+            $isEffluentApplication =
+                $sourceApplication->isEffluentApplication();
+
+            if (
+                !$isWaterApplication
+                && !$isEffluentApplication
+            ) {
                 return response()->json([
                     'success' => false,
                     'message' =>
-                    'Pindaan ini hanya tersedia untuk '
-                        . 'permohonan Aktiviti Badan Perairan.',
+                    'Jenis permohonan lesen ini tidak '
+                        . 'menyokong proses pindaan.',
                 ], 422);
             }
 
@@ -180,12 +191,20 @@ class AmendmentController extends Controller
             $newApplication->save();
 
             /*
-             * Salin rekod teknikal badan perairan.
-             */
-            $this->copyWaterBody(
-                $sourceApplication,
-                $newApplication
-            );
+ * Salin rekod teknikal berdasarkan
+ * jenis permohonan asal.
+ */
+            if ($sourceApplication->isEffluentApplication()) {
+                $this->copyEffluent(
+                    $sourceApplication,
+                    $newApplication
+                );
+            } else {
+                $this->copyWaterBody(
+                    $sourceApplication,
+                    $newApplication
+                );
+            }
 
             /*
              * Cipta rekod pindaan.
@@ -222,6 +241,11 @@ class AmendmentController extends Controller
                         'water_body' =>
                         $sourceApplication
                             ->waterBody
+                            ?->toArray(),
+
+                        'effluent' =>
+                        $sourceApplication
+                            ->effluent
                             ?->toArray(),
                     ],
 
@@ -540,6 +564,21 @@ class AmendmentController extends Controller
                 $newApplicant->applicant_id;
 
             $newCompany->save();
+
+            /*
+     * Efluen menggunakan senarai pegawai
+     * syarikat. Salin semua pegawai supaya
+     * rekod asal tidak diubah.
+     */
+            foreach ($sourceCompany->officers as $sourceOfficer) {
+                $newOfficer =
+                    $sourceOfficer->replicate();
+
+                $newOfficer->company_id =
+                    $newCompany->company_id;
+
+                $newOfficer->save();
+            }
         }
 
         return $newApplicant;
@@ -562,6 +601,25 @@ class AmendmentController extends Controller
             $newApplication->application_id;
 
         $newWaterBody->save();
+    }
+
+    private function copyEffluent(
+        LsankApplication $sourceApplication,
+        LsankApplication $newApplication
+    ): void {
+        if (!$sourceApplication->effluent) {
+            return;
+        }
+
+        $newEffluent =
+            $sourceApplication
+            ->effluent
+            ->replicate();
+
+        $newEffluent->application_id =
+            $newApplication->application_id;
+
+        $newEffluent->save();
     }
 
     private function prepareDraftData(
@@ -633,8 +691,35 @@ class AmendmentController extends Controller
 
                 'form_a_edit_enabled' =>
                 false,
+
+                [
+                    'module' =>
+                    $sourceApplication->isEffluentApplication()
+                        ? 'effluent'
+                        : 'water',
+
+                    'is_amendment' => true,
+
+                    'license_id' =>
+                    (int) $license->license_id,
+
+                    'original_application_id' =>
+                    (int) $sourceApplication
+                        ->application_id,
+
+                    'form_a_edit_enabled' =>
+                    false,
+                ]
             ]
         );
+
+        if ($sourceApplication->isEffluentApplication()) {
+            $draftData['selected_service_type_id'] =
+                $draftData['selected_service_type_id']
+                ?? $sourceApplication
+                ->effluent
+                ?->service_type_id;
+        }
 
         return $draftData;
     }
@@ -670,6 +755,23 @@ class AmendmentController extends Controller
         LsankLicense $license,
         bool $resumed
     ) {
+        $application->loadMissing([
+            'effluent.serviceType',
+        ]);
+
+        $isEffluent =
+            $application->isEffluentApplication();
+
+        $applicationType =
+            $isEffluent
+            ? 'effluent'
+            : 'water';
+
+        $navigationPath =
+            $isEffluent
+            ? '/applications/effluent/form'
+            : '/applications/water/form';
+
         $selectedActivities = data_get(
             $application->draft_data,
             'selected_activities',
@@ -718,7 +820,7 @@ class AmendmentController extends Controller
                 'amendment',
 
                 'application_type' =>
-                'water',
+                $applicationType,
 
                 'applicant_type' =>
                 (string) (
@@ -732,17 +834,35 @@ class AmendmentController extends Controller
                     ? $selectedActivities
                     : [],
 
+                'service_type_id' =>
+                $application
+                    ->effluent
+                    ?->service_type_id,
+
+                'service_name' =>
+                $application
+                    ->effluent
+                    ?->serviceType
+                    ?->service_name,
+
                 'form_a_edit_enabled' =>
                 (bool) data_get(
                     $application->draft_data,
                     'amendment.form_a_edit_enabled',
                     false
                 ),
+
+                /*
+             * Disediakan juga dalam data untuk
+             * memudahkan Flutter membaca route.
+             */
+                'navigation_path' =>
+                $navigationPath,
             ],
 
             'navigation' => [
                 'path' =>
-                '/applications/water/form',
+                $navigationPath,
 
                 'query' => [
                     'applicationId' =>

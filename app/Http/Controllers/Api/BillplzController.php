@@ -2,9 +2,13 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Api\Concerns\HandlesApplicationData;
 use App\Http\Controllers\Controller;
+use App\Models\LsankApplication;
 use App\Models\LsankInvoice;
 use App\Models\LsankPayment;
+use App\Models\LsankReceipt;
+use App\Services\LicenseService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -13,12 +17,13 @@ use Throwable;
 
 class BillplzController extends Controller
 {
+    use HandlesApplicationData;
     public function createBill(
         Request $request,
         LsankInvoice $invoice
-    ) { 
-        
-    //nanti buang
+    ) {
+
+        //nanti buang
         if (!config('services.billplz.enabled')) {
             return response()->json([
                 'success' => false,
@@ -26,7 +31,7 @@ class BillplzController extends Controller
                 'Payment gateway Billplz sedang dinyahaktifkan sementara untuk tujuan pengujian sistem.',
             ], 503);
         }
-    //
+        //
 
 
         /*
@@ -436,8 +441,10 @@ class BillplzController extends Controller
         }
     }
 
-    public function callback(Request $request)
-    {
+    public function callback(
+        Request $request,
+        LicenseService $licenseService
+    ) {
         $payload = $request->all();
 
         Log::info(
@@ -447,9 +454,11 @@ class BillplzController extends Controller
             ]
         );
 
-        if (
-            !$this->verifyBillplzSignature($payload)
-        ) {
+        /*
+        * Sahkan callback benar-benar datang
+        * daripada Billplz.
+        */
+        if (!$this->verifyBillplzSignature($payload)) {
             Log::warning(
                 'Invalid Billplz callback signature',
                 [
@@ -465,9 +474,9 @@ class BillplzController extends Controller
             ], 403);
         }
 
-        $billId = trim((string) (
-            $payload['id'] ?? ''
-        ));
+        $billId = trim(
+            (string) ($payload['id'] ?? '')
+        );
 
         $paid = filter_var(
             $payload['paid'] ?? false,
@@ -475,9 +484,9 @@ class BillplzController extends Controller
         );
 
         $state = strtolower(
-            trim((string) (
-                $payload['state'] ?? ''
-            ))
+            trim(
+                (string) ($payload['state'] ?? '')
+            )
         );
 
         if ($billId === '') {
@@ -493,7 +502,6 @@ class BillplzController extends Controller
                 'billplz_bill_id',
                 $billId
             )
-            ->with('invoice')
             ->first();
 
         if (!$payment) {
@@ -512,81 +520,478 @@ class BillplzController extends Controller
         }
 
         /*
-         * Callback Billplz boleh dihantar semula.
-         * Elakkan pembayaran diproses dua kali.
-         */
-        if (
-            $paid &&
-            in_array(
-                strtolower(
-                    trim(
-                        (string) $payment->payment_status
-                    )
-                ),
-                ['successful', 'success', 'paid'],
-                true
-            )
-        ) {
-            return response()->json([
-                'success' => true,
-                'message' =>
-                'Pembayaran telah diproses sebelum ini.',
-            ]);
-        }
-
-        DB::transaction(function () use (
-            $payment,
-            $payload,
-            $paid,
-            $state
-        ) {
-            $paymentStatus = match (true) {
-                $paid => 'successful',
-                $state === 'due' => 'pending',
-                default => 'failed',
-            };
-
-            $payment->update([
-                'payment_status' =>
-                $paymentStatus,
-
-                'payment_date' =>
-                $paid ? now() : null,
-
-                'transaction_ref_no' =>
-                $payload['transaction_id']
-                    ?? $payment->billplz_bill_id,
-
-                'billplz_callback_payload' =>
+        * Semua kemas kini pembayaran dibuat
+        * dalam satu transaksi.
+        */
+        $result = DB::transaction(
+            function () use (
+                $payment,
                 $payload,
+                $paid,
+                $state
+            ): array {
+                $lockedPayment =
+                    LsankPayment::query()
+                    ->where(
+                        'payment_id',
+                        $payment->payment_id
+                    )
+                    ->lockForUpdate()
+                    ->firstOrFail();
 
-                'billplz_callback_received_at' =>
-                now(),
-            ]);
+                $invoice =
+                    LsankInvoice::query()
+                    ->where(
+                        'invoice_id',
+                        $lockedPayment->invoice_id
+                    )
+                    ->lockForUpdate()
+                    ->firstOrFail();
 
-            if (
-                $paid &&
-                $payment->invoice
-            ) {
-                $payment->invoice->update([
-                    'status' => 'paid',
+                $application =
+                    LsankApplication::query()
+                    ->where(
+                        'application_id',
+                        $invoice->application_id
+                    )
+                    ->lockForUpdate()
+                    ->first();
+
+                $paymentStatus = match (true) {
+                    $paid => 'successful',
+                    $state === 'due' => 'pending',
+                    default => 'failed',
+                };
+
+                $lockedPayment->update([
+                    'amount' =>
+                    (float) $invoice->total_amount,
+
+                    'payment_status' =>
+                    $paymentStatus,
+
+                    'payment_date' =>
+                    $paid ? now() : null,
+
+                    'transaction_ref_no' =>
+                    $payload['transaction_id']
+                        ?? $lockedPayment
+                        ->billplz_bill_id,
+
+                    'billplz_callback_payload' =>
+                    $payload,
+
+                    'billplz_callback_received_at' =>
+                    now(),
                 ]);
+
+                /*
+                * Bayaran belum berjaya.
+                */
+                if (!$paid) {
+                    return [
+                        'paid' => false,
+
+                        'application_id' =>
+                        $application
+                            ?->application_id,
+
+                        'invoice_id' =>
+                        $invoice->invoice_id,
+
+                        'payment_id' =>
+                        $lockedPayment->payment_id,
+
+                        'payment_type' =>
+                        $invoice->payment_type,
+
+                        'generate_license' =>
+                        false,
+
+                        'final_payment_types' =>
+                        [],
+                    ];
+                }
+
+                /*
+                * Tandakan invois sebagai paid.
+                */
+                $invoice->status = 'paid';
+                $invoice->save();
+
+                /*
+                * Cipta atau kemas kini resit.
+                * Selamat jika callback dihantar berulang kali.
+                */
+                $this->createBillplzReceipt(
+                    $invoice,
+                    $lockedPayment
+                );
+
+                /*
+                * Invois tanpa application masih boleh
+                * direkodkan tetapi tiada workflow diteruskan.
+                */
+                if (!$application) {
+                    return [
+                        'paid' => true,
+                        'application_id' => null,
+
+                        'invoice_id' =>
+                        $invoice->invoice_id,
+
+                        'payment_id' =>
+                        $lockedPayment->payment_id,
+
+                        'payment_type' =>
+                        $invoice->payment_type,
+
+                        'generate_license' =>
+                        false,
+
+                        'final_payment_types' =>
+                        [],
+                    ];
+                }
+
+                /*
+                * Fi Pemprosesan:
+                * Draf/Fi Pemprosesan → Dalam Proses.
+                */
+                if (
+                    $this->isProcessingFee(
+                        $invoice->payment_type
+                    )
+                ) {
+                    $this->completeProcessingFeeStage(
+                        $application
+                    );
+
+                    return [
+                        'paid' => true,
+
+                        'application_id' =>
+                        $application->application_id,
+
+                        'invoice_id' =>
+                        $invoice->invoice_id,
+
+                        'payment_id' =>
+                        $lockedPayment->payment_id,
+
+                        'payment_type' =>
+                        $invoice->payment_type,
+
+                        'generate_license' =>
+                        false,
+
+                        'final_payment_types' =>
+                        [],
+                    ];
+                }
+
+                /*
+             * Semak sama ada invois ini ialah
+             * invois bayaran akhir.
+             */
+                $finalPaymentTypes =
+                    $this->finalPaymentTypes(
+                        $application
+                    );
+
+                $isFinalInvoice = in_array(
+                    trim(
+                        (string)
+                        $invoice->payment_type
+                    ),
+                    $finalPaymentTypes,
+                    true
+                );
+
+                if (!$isFinalInvoice) {
+                    return [
+                        'paid' => true,
+
+                        'application_id' =>
+                        $application->application_id,
+
+                        'invoice_id' =>
+                        $invoice->invoice_id,
+
+                        'payment_id' =>
+                        $lockedPayment->payment_id,
+
+                        'payment_type' =>
+                        $invoice->payment_type,
+
+                        'generate_license' =>
+                        false,
+
+                        'final_payment_types' =>
+                        [],
+                    ];
+                }
+
+                /*
+                * Semak sama ada masih terdapat
+                * invois akhir yang belum dibayar.
+                */
+                $hasUnpaidFinalInvoice =
+                    LsankInvoice::query()
+                    ->where(
+                        'application_id',
+                        $application->application_id
+                    )
+                    ->whereIn(
+                        'payment_type',
+                        $finalPaymentTypes
+                    )
+                    ->where(
+                        function ($query) {
+                            $query
+                                ->whereNull('status')
+                                ->orWhereNotIn(
+                                    'status',
+                                    [
+                                        'paid',
+                                        'sudah_bayar',
+                                    ]
+                                );
+                        }
+                    )
+                    ->exists();
+
+                if ($hasUnpaidFinalInvoice) {
+                    $reviewData = is_array(
+                        $application->review_data
+                    )
+                        ? $application->review_data
+                        : [];
+
+                    $reviewData['final_invoice_status'] = 'pending_payment';
+
+                    $reviewData['last_final_invoice_paid_at'] = now()->toDateTimeString();
+
+                    $application->payment_status =
+                        LsankApplication::PAYMENT_MENUNGGU_BAYARAN;
+
+                    $application->review_data =
+                        $reviewData;
+
+                    $application->save();
+
+                    return [
+                        'paid' => true,
+
+                        'application_id' =>
+                        $application->application_id,
+
+                        'invoice_id' =>
+                        $invoice->invoice_id,
+
+                        'payment_id' =>
+                        $lockedPayment->payment_id,
+
+                        'payment_type' =>
+                        $invoice->payment_type,
+
+                        'generate_license' =>
+                        false,
+
+                        'final_payment_types' =>
+                        $finalPaymentTypes,
+                    ];
+                }
+
+                /*
+                * Semua invois akhir sudah dibayar.
+                */
+                $reviewData = is_array(
+                    $application->review_data
+                )
+                    ? $application->review_data
+                    : [];
+
+                $reviewData['final_invoice_status'] = 'paid';
+
+                $reviewData['final_paid_at'] = now()->toDateTimeString();
+
+                $application->payment_status =
+                    LsankApplication::PAYMENT_SUDAH_BAYAR;
+
+                $application->review_data =
+                    $reviewData;
+
+                $application->save();
+
+                return [
+                    'paid' => true,
+
+                    'application_id' =>
+                    $application->application_id,
+
+                    'invoice_id' =>
+                    $invoice->invoice_id,
+
+                    'payment_id' =>
+                    $lockedPayment->payment_id,
+
+                    'payment_type' =>
+                    $invoice->payment_type,
+
+                    'generate_license' =>
+                    true,
+
+                    'final_payment_types' =>
+                    $finalPaymentTypes,
+                ];
             }
-        });
+        );
+
+        $licenseGenerated = false;
+        $licenseUpdated = false;
+        $licenseId = null;
+        $licenseNo = null;
 
         /*
-         * Langkah seterusnya:
-         *
-         * 1. Cipta resit.
-         * 2. Update status permohonan.
-         * 3. Teruskan flow fi pemprosesan.
-         * 4. Jana lesen jika semua invoice akhir dibayar.
-         */
+        * Jana atau kemas kini lesen hanya selepas
+        * transaksi pembayaran selesai.
+        */
+        if (
+            $result['paid'] === true &&
+            $result['generate_license'] === true &&
+            !empty($result['application_id'])
+        ) {
+            try {
+                $application =
+                    LsankApplication::query()
+                    ->findOrFail(
+                        $result['application_id']
+                    );
+
+                /*
+                * LicenseService akan membezakan:
+                *
+                * new       → jana lesen baharu
+                * renewal   → kemas kini lesen asal
+                * amendment → kemas kini lesen asal
+                */
+                $license =
+                    $licenseService
+                    ->generateForApprovedApplication(
+                        $application
+                    );
+
+                $licenseGenerated = true;
+
+                $licenseUpdated =
+                    $application->isAmendment() ||
+                    $application
+                    ->application_category ===
+                    'renewal';
+
+                $licenseId =
+                    $license->license_id;
+
+                $licenseNo =
+                    $license->license_no;
+
+                /*
+                * Pautkan semua invois akhir
+                * kepada lesen.
+                */
+                LsankInvoice::query()
+                    ->where(
+                        'application_id',
+                        $application->application_id
+                    )
+                    ->whereIn(
+                        'payment_type',
+                        $result['final_payment_types']
+                    )
+                    ->update([
+                        'license_id' =>
+                        $license->license_id,
+                    ]);
+
+                $freshApplication =
+                    $application->fresh();
+
+                $reviewData = is_array(
+                    $freshApplication->review_data
+                )
+                    ? $freshApplication->review_data
+                    : [];
+
+                $reviewData['license_generation_status'] = $licenseUpdated
+                    ? 'updated'
+                    : 'generated';
+
+                $reviewData['license_id'] =
+                    $license->license_id;
+
+                $reviewData['license_no'] =
+                    $license->license_no;
+
+                $reviewData[$licenseUpdated
+                    ? 'license_updated_at'
+                    : 'license_generated_at'] = now()->toDateTimeString();
+
+                $freshApplication->review_data =
+                    $reviewData;
+
+                $freshApplication->save();
+            } catch (Throwable $e) {
+                /*
+                * Callback mesti tetap memberi 200
+                * kepada Billplz supaya callback
+                * tidak dihantar tanpa henti.
+                */
+                Log::error(
+                    'Billplz post-payment license generation failed',
+                    [
+                        'application_id' =>
+                        $result['application_id'],
+
+                        'invoice_id' =>
+                        $result['invoice_id'],
+
+                        'message' =>
+                        $e->getMessage(),
+
+                        'trace' =>
+                        $e->getTraceAsString(),
+                    ]
+                );
+            }
+        }
+
+        $responseData = array_merge(
+            $result,
+            [
+                'license_generated' =>
+                $licenseGenerated,
+
+                'license_updated' =>
+                $licenseUpdated,
+
+                'license_id' =>
+                $licenseId,
+
+                'license_no' =>
+                $licenseNo,
+            ]
+        );
 
         return response()->json([
             'success' => true,
+
             'message' =>
-            'Callback Billplz berjaya diproses.',
+            $result['paid'] === true
+                ? 'Callback Billplz berjaya diproses.'
+                : 'Status pembayaran Billplz berjaya dikemas kini.',
+
+            'data' => $responseData,
         ]);
     }
 
@@ -678,6 +1083,245 @@ class BillplzController extends Controller
                 'paid' => $paid,
             ],
         ]);
+    }
+
+    private function isProcessingFee(
+        ?string $paymentType
+    ): bool {
+        return str_contains(
+            strtolower(
+                trim((string) $paymentType)
+            ),
+            'pemprosesan'
+        );
+    }
+
+    private function finalPaymentTypes(
+        LsankApplication $application
+    ): array {
+        /*
+        * Pindaan lesen hanya mempunyai
+        * Fi Pindaan dan Fi Caj.
+        */
+        if ($application->isAmendment()) {
+            return [
+                'Fi Pindaan Maklumat',
+                'Fi Caj',
+            ];
+        }
+
+        /*
+        * Permohonan baharu dan pembaharuan.
+        */
+        return [
+            'Fi Lesen',
+            'Fi Caj',
+            'Wang Sekuriti',
+            'Fi Sekuriti',
+        ];
+    }
+
+    private function receiptFeeCode(
+        ?string $paymentType
+    ): string {
+        return match (trim((string) $paymentType)) {
+            'Fi Pemprosesan' => '01',
+            'Fi Lesen' => '02',
+            'Fi Caj' => '03',
+            'Wang Sekuriti' => '04',
+            'Fi Sekuriti' => '04',
+            'Fi Pindaan Maklumat' => '05',
+            default => '00',
+        };
+    }
+
+    private function createBillplzReceipt(
+        LsankInvoice $invoice,
+        LsankPayment $payment
+    ): LsankReceipt {
+        /*
+        * Callback Billplz boleh dihantar lebih
+        * daripada sekali. Elakkan resit pendua.
+        */
+        $existingReceipt =
+            LsankReceipt::query()
+            ->where(
+                'invoice_id',
+                $invoice->invoice_id
+            )
+            ->first();
+
+        if ($existingReceipt) {
+            $existingReceipt->update([
+                'payment_id' =>
+                $payment->payment_id,
+
+                'receipt_date' =>
+                $payment->payment_date
+                    ?? now(),
+
+                'amount' =>
+                (float) $invoice->total_amount,
+
+                'status' =>
+                'valid',
+            ]);
+
+            return $existingReceipt;
+        }
+
+        $runningNumber =
+            $this->nextReceiptRunningNumber();
+
+        $receiptNo =
+            'RESIT-'
+            . now()->format('Y')
+            . '-'
+            . str_pad(
+                (string) $runningNumber,
+                4,
+                '0',
+                STR_PAD_LEFT
+            )
+            . '-'
+            . $this->receiptFeeCode(
+                $invoice->payment_type
+            );
+
+        return LsankReceipt::create([
+            'receipt_no' =>
+            $receiptNo,
+
+            'invoice_id' =>
+            $invoice->invoice_id,
+
+            'payment_id' =>
+            $payment->payment_id,
+
+            'receipt_date' =>
+            $payment->payment_date
+                ?? now(),
+
+            'amount' =>
+            (float) $invoice->total_amount,
+
+            'receipt_pdf_path' =>
+            null,
+
+            'status' =>
+            'valid',
+        ]);
+    }
+
+    private function nextReceiptRunningNumber(): int
+    {
+        $year = now()->format('Y');
+
+        $latestReceipt =
+            LsankReceipt::query()
+            ->where(
+                'receipt_no',
+                'like',
+                'RESIT-' . $year . '-%'
+            )
+            ->orderByDesc('receipt_id')
+            ->lockForUpdate()
+            ->first();
+
+        if (
+            !$latestReceipt ||
+            empty($latestReceipt->receipt_no)
+        ) {
+            return 1;
+        }
+
+        $parts = explode(
+            '-',
+            $latestReceipt->receipt_no
+        );
+
+        $runningNumber =
+            count($parts) >= 3
+            ? (int) $parts[2]
+            : 0;
+
+        return max(
+            1,
+            $runningNumber + 1
+        );
+    }
+
+    private function completeProcessingFeeStage(
+        LsankApplication $application
+    ): void {
+        $application->loadMissing([
+            'effluent.serviceType',
+            'waterBody',
+        ]);
+
+        /*
+        * Tukar nombor draf kepada nombor
+        * permohonan sebenar.
+        */
+        if (
+            empty($application->application_ref_no) ||
+            str_starts_with(
+                strtoupper(
+                    (string)
+                    $application->application_ref_no
+                ),
+                'DRAF-'
+            )
+        ) {
+            if ($application->isEffluentApplication()) {
+                $sectionCode =
+                    $application
+                    ->effluent
+                    ?->serviceType
+                    ?->service_code
+                    ?? '600-21';
+            } else {
+                $sectionCode =
+                    $this->waterSectionCode(
+                        $application
+                            ->waterBody
+                            ?->activity_details
+                            ?? $application
+                            ->activity_name
+                    );
+            }
+
+            $application->application_ref_no =
+                $this->generateApplicationFileNo(
+                    $sectionCode,
+                    $this->districtCode(
+                        $application->district
+                    )
+                );
+        }
+
+        $application->application_status_id =
+            $this->applicationStatusId(
+                'in_process',
+                'Dalam Proses',
+                3
+            );
+
+        $application->application_status =
+            LsankApplication::STATUS_DALAM_PROSES;
+
+        $application->payment_status =
+            LsankApplication::PAYMENT_SUDAH_BAYAR;
+
+        $application->submitted_at =
+            $application->submitted_at
+            ?? now();
+
+        $application->submitted_data =
+            $application->submitted_data
+            ?? $application->draft_data;
+
+        $application->save();
     }
 
     private function verifyBillplzSignature(

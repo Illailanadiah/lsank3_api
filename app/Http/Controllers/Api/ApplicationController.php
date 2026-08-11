@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use App\Services\LicenseService;
 use App\Models\LsankLicenseTerminationRequest;
 use App\Models\LsankAmendmentApplication;
+use App\Models\LsankRenewalApplication;
 
 class ApplicationController extends Controller
 {
@@ -987,6 +988,46 @@ class ApplicationController extends Controller
                     )
                 )
             );
+        }
+
+        $isEffluentRenewal =
+            $fresh->isEffluentApplication()
+            && strtolower(
+                trim((string) $fresh->application_category)
+            ) === 'renewal';
+
+        $isRenewalRejected =
+            $isEffluentRenewal
+            && strtolower(
+                trim((string) $fresh->application_status)
+            ) === LsankApplication::STATUS_GAGAL
+            && in_array(
+                $workflowStage,
+                [
+                    'head_department_rejected',
+                    'director_rejected',
+                ],
+                true
+            );
+
+        if ($isRenewalRejected) {
+            LsankRenewalApplication::query()
+                ->where(
+                    'application_id',
+                    $fresh->application_id
+                )
+                ->whereNotIn(
+                    'renewal_status',
+                    [
+                        LsankRenewalApplication::STATUS_COMPLETED,
+                        LsankRenewalApplication::STATUS_REJECTED,
+                        LsankRenewalApplication::STATUS_CANCELLED,
+                    ]
+                )
+                ->update([
+                    'renewal_status' =>
+                    LsankRenewalApplication::STATUS_REJECTED,
+                ]);
         }
 
         $isDirectorApproval =

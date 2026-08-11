@@ -6,8 +6,10 @@ use App\Models\LsankApplication;
 use App\Models\LsankAmendmentApplication;
 use App\Models\LsankLicense;
 use App\Models\LsankLicenseStatus;
+use App\Models\LsankEffluentApplication;
 use App\Models\LsankWaterBodyApplication;
 use App\Models\LsankInvoice;
+use App\Models\LsankRenewalApplication;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -26,6 +28,18 @@ class LicenseService
     ): LsankLicense {
         if ($application->isAmendment()) {
             return $this->applyApprovedAmendment(
+                $application
+            );
+        }
+
+        if (
+            strtolower(
+                trim(
+                    (string) $application->application_category
+                )
+            ) === 'renewal'
+        ) {
+            return $this->applyApprovedRenewal(
                 $application
             );
         }
@@ -341,8 +355,8 @@ class LicenseService
             );
 
             /*
-         * Cari rekod pindaan berdasarkan application_id.
-         */
+            * Cari rekod pindaan berdasarkan application_id.
+            */
             $amendment =
                 LsankAmendmentApplication::query()
                 ->where(
@@ -353,8 +367,8 @@ class LicenseService
                 ->first();
 
             /*
-         * Fallback berdasarkan amendment_id dalam draft_data.
-         */
+            * Fallback berdasarkan amendment_id dalam draft_data.
+            */
             if (!$amendment && $amendmentId > 0) {
                 $amendment =
                     LsankAmendmentApplication::query()
@@ -380,9 +394,9 @@ class LicenseService
             }
 
             /*
-         * Ambil lesen asal berdasarkan license_id
-         * yang disimpan dalam rekod pindaan.
-         */
+            * Ambil lesen asal berdasarkan license_id
+            * yang disimpan dalam rekod pindaan.
+            */
             $license = LsankLicense::query()
                 ->where(
                     'license_id',
@@ -398,15 +412,15 @@ class LicenseService
             }
 
             /*
- * Lesen masih dipautkan kepada application asal.
- *
- * Oleh itu, salin semua data terkini daripada
- * application pindaan ke application asal supaya:
- *
- * - License List memaparkan data baru.
- * - License Detail memaparkan data baru.
- * - Nombor lesen kekal sama.
- */
+            * Lesen masih dipautkan kepada application asal.
+            *
+            * Oleh itu, salin semua data terkini daripada
+            * application pindaan ke application asal supaya:
+            *
+            * - License List memaparkan data baru.
+            * - License Detail memaparkan data baru.
+            * - Nombor lesen kekal sama.
+            */
             $sourceApplication = LsankApplication::query()
                 ->where(
                     'application_id',
@@ -414,6 +428,12 @@ class LicenseService
                 )
                 ->lockForUpdate()
                 ->first();
+
+            if (!$sourceApplication) {
+                throw new RuntimeException(
+                    'Permohonan asal lesen tidak dijumpai.'
+                );
+            }
 
             if (
                 empty($amendment->source_application_id)
@@ -426,12 +446,6 @@ class LicenseService
                 $amendment->save();
             }
 
-            if (!$sourceApplication) {
-                throw new RuntimeException(
-                    'Permohonan asal lesen tidak dijumpai.'
-                );
-            }
-
             $this->syncAmendmentToSourceApplication(
                 $lockedApplication,
                 $sourceApplication
@@ -440,9 +454,9 @@ class LicenseService
             $sourceApplication->refresh();
 
             /*
-         * Cari lesen duplicate yang pernah terhasil
-         * menggunakan application pindaan ini.
-         */
+            * Cari lesen duplicate yang pernah terhasil
+            * menggunakan application pindaan ini.
+            */
             $duplicateLicenseIds = LsankLicense::query()
                 ->where(
                     'application_id',
@@ -458,8 +472,8 @@ class LicenseService
 
             if ($duplicateLicenseIds->isNotEmpty()) {
                 /*
-             * Pindahkan invois duplicate kepada lesen asal.
-             */
+                * Pindahkan invois duplicate kepada lesen asal.
+                */
                 DB::table('lsank_invoices')
                     ->whereIn(
                         'license_id',
@@ -474,8 +488,8 @@ class LicenseService
                     ]);
 
                 /*
-             * Padam lesen duplicate.
-             */
+                * Padam lesen duplicate.
+                */
                 LsankLicense::query()
                     ->whereIn(
                         'license_id',
@@ -642,6 +656,606 @@ class LicenseService
     }
 
     /**
+     * Lengkapkan pembaharuan dengan mengemas kini
+     * tempoh dan maklumat lesen asal.
+     */
+    public function applyApprovedRenewal(
+        LsankApplication $application
+    ): LsankLicense {
+        return DB::transaction(function () use ($application) {
+            $lockedApplication =
+                LsankApplication::query()
+                ->where(
+                    'application_id',
+                    $application->application_id
+                )
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (
+                strtolower(
+                    trim(
+                        (string)
+                        $lockedApplication
+                            ->application_category
+                    )
+                ) !== 'renewal'
+            ) {
+                throw new RuntimeException(
+                    'Permohonan ini bukan permohonan pembaharuan lesen.'
+                );
+            }
+
+            if (
+                !$lockedApplication
+                    ->isDirectorApproved()
+            ) {
+                throw new RuntimeException(
+                    'Pembaharuan lesen hanya boleh diselesaikan selepas kelulusan Ketua Pengarah.'
+                );
+            }
+
+            $draftData = is_array(
+                $lockedApplication->draft_data
+            )
+                ? $lockedApplication->draft_data
+                : [];
+
+            /*
+         * Cari rekod pembaharuan berdasarkan
+         * application_id pembaharuan.
+         */
+            $renewal =
+                LsankRenewalApplication::query()
+                ->where(
+                    'application_id',
+                    $lockedApplication
+                        ->application_id
+                )
+                ->lockForUpdate()
+                ->first();
+
+            /*
+         * Fallback menggunakan license_id
+         * yang disimpan dalam draft_data.
+         */
+            if (!$renewal) {
+                $renewalLicenseId = (int) (
+                    $draftData['renewal_license_id']
+                    ?? data_get(
+                        $draftData,
+                        'meta.renewal_license_id'
+                    )
+                    ?? 0
+                );
+
+                if ($renewalLicenseId > 0) {
+                    $renewal =
+                        LsankRenewalApplication::query()
+                        ->where(
+                            'license_id',
+                            $renewalLicenseId
+                        )
+                        ->latest('renewal_id')
+                        ->lockForUpdate()
+                        ->first();
+
+                    if ($renewal) {
+                        $renewal->application_id =
+                            $lockedApplication
+                            ->application_id;
+
+                        $renewal->save();
+                    }
+                }
+            }
+
+            if (!$renewal) {
+                throw new RuntimeException(
+                    'Rekod pembaharuan lesen tidak dijumpai.'
+                );
+            }
+
+            /*
+         * Ambil dan lock lesen asal.
+         */
+            $license =
+                LsankLicense::query()
+                ->where(
+                    'license_id',
+                    $renewal->license_id
+                )
+                ->lockForUpdate()
+                ->first();
+
+            if (!$license) {
+                throw new RuntimeException(
+                    'Lesen asal untuk pembaharuan tidak dijumpai.'
+                );
+            }
+
+            /*
+         * Elakkan tarikh dilanjutkan dua kali jika
+         * callback pembayaran dipanggil semula.
+         */
+            if (
+                strtolower(
+                    trim(
+                        (string)
+                        $renewal->renewal_status
+                    )
+                ) ===
+                LsankRenewalApplication::STATUS_COMPLETED
+            ) {
+                return $license->fresh();
+            }
+
+            /*
+         * Pastikan invois akhir sudah selesai.
+         */
+            $reviewData = is_array(
+                $lockedApplication->review_data
+            )
+                ? $lockedApplication->review_data
+                : [];
+
+            $finalInvoiceStatus = strtolower(
+                trim(
+                    (string) (
+                        $reviewData['final_invoice_status'] ?? ''
+                    )
+                )
+            );
+
+            $isNoFee = in_array(
+                $finalInvoiceStatus,
+                [
+                    'exempt',
+                    'no_fee',
+                ],
+                true
+            );
+
+            $finalPaymentTypes = [
+                'Fi Lesen',
+                'Fi Caj',
+                'Wang Sekuriti',
+                'Fi Sekuriti',
+            ];
+
+            $finalInvoices =
+                LsankInvoice::query()
+                ->where(
+                    'application_id',
+                    $lockedApplication
+                        ->application_id
+                )
+                ->whereIn(
+                    'payment_type',
+                    $finalPaymentTypes
+                )
+                ->lockForUpdate()
+                ->get();
+
+            if (
+                !$isNoFee &&
+                $finalInvoices->isEmpty()
+            ) {
+                throw new RuntimeException(
+                    'Invois akhir pembaharuan belum dijana.'
+                );
+            }
+
+            $unpaidInvoices =
+                $finalInvoices->filter(
+                    fn(LsankInvoice $invoice) =>
+                    !in_array(
+                        strtolower(
+                            trim(
+                                (string)
+                                $invoice->status
+                            )
+                        ),
+                        [
+                            'paid',
+                            'sudah_bayar',
+                        ],
+                        true
+                    )
+                );
+
+            if ($unpaidInvoices->isNotEmpty()) {
+                throw new RuntimeException(
+                    'Lesen belum boleh diperbaharui. Selesaikan semua bayaran akhir terlebih dahulu.'
+                );
+            }
+
+            /*
+         * Dapatkan application asal yang masih
+         * dipautkan kepada lesen.
+         */
+            $sourceApplication =
+                LsankApplication::query()
+                ->where(
+                    'application_id',
+                    $license->application_id
+                )
+                ->lockForUpdate()
+                ->first();
+
+            if (!$sourceApplication) {
+                throw new RuntimeException(
+                    'Permohonan asal lesen tidak dijumpai.'
+                );
+            }
+
+            /*
+         * Salin data terkini daripada permohonan
+         * pembaharuan ke application asal.
+         *
+         * Helper ini tidak menyalin application_id,
+         * status, kategori atau nombor permohonan.
+         */
+            $this->syncAmendmentToSourceApplication(
+                $lockedApplication,
+                $sourceApplication
+            );
+
+            $sourceApplication->refresh();
+
+            /*
+         * Buang lesen duplicate yang mungkin pernah
+         * terhasil melalui flow lama.
+         */
+            $duplicateLicenseIds =
+                LsankLicense::query()
+                ->where(
+                    'application_id',
+                    $lockedApplication
+                        ->application_id
+                )
+                ->where(
+                    'license_id',
+                    '!=',
+                    $license->license_id
+                )
+                ->lockForUpdate()
+                ->pluck('license_id');
+
+            if ($duplicateLicenseIds->isNotEmpty()) {
+                DB::table('lsank_invoices')
+                    ->whereIn(
+                        'license_id',
+                        $duplicateLicenseIds->all()
+                    )
+                    ->update([
+                        'license_id' =>
+                        $license->license_id,
+
+                        'updated_at' =>
+                        now(),
+                    ]);
+
+                LsankLicense::query()
+                    ->whereIn(
+                        'license_id',
+                        $duplicateLicenseIds->all()
+                    )
+                    ->delete();
+            }
+
+            /*
+         * Tempoh lesen dipilih dalam borang,
+         * minimum 1 tahun dan maksimum 5 tahun.
+         */
+            $draftMeta = is_array(
+                $draftData['meta'] ?? null
+            )
+                ? $draftData['meta']
+                : [];
+
+            $licenseDurationYear = (int) (
+                $draftData['license_duration_year']
+                ?? $draftMeta['license_duration_year']
+                ?? 1
+            );
+
+            $licenseDurationYear = max(
+                1,
+                min(
+                    $licenseDurationYear,
+                    5
+                )
+            );
+
+            $licenseData = is_array(
+                $reviewData['license'] ?? null
+            )
+                ? $reviewData['license']
+                : [];
+
+            /*
+         * Utamakan tarikh yang ditetapkan
+         * oleh pegawai semakan.
+         */
+            $approvedStartDate =
+                $licenseData['license_start_date']
+                ?? $reviewData['license_start_date']
+                ?? null;
+
+            $oldExpiryDate =
+                $license->expiry_date
+                ? Carbon::parse(
+                    $license->expiry_date
+                )->startOfDay()
+                : null;
+
+            if ($approvedStartDate) {
+                $newStartDate = Carbon::parse(
+                    $this->parseDate(
+                        $approvedStartDate
+                    )
+                )->startOfDay();
+            } elseif (
+                $oldExpiryDate &&
+                $oldExpiryDate->greaterThanOrEqualTo(
+                    now()->startOfDay()
+                )
+            ) {
+                /*
+             * Lesen belum tamat:
+             * tempoh baharu bermula sehari selepas
+             * tarikh tamat semasa.
+             */
+                $newStartDate =
+                    $oldExpiryDate
+                    ->copy()
+                    ->addDay();
+            } else {
+                /*
+             * Lesen sudah tamat:
+             * tempoh baharu bermula hari ini.
+             */
+                $newStartDate =
+                    now()->startOfDay();
+            }
+
+            $newExpiryDate =
+                $newStartDate
+                ->copy()
+                ->addYears(
+                    $licenseDurationYear
+                )
+                ->subDay();
+
+            /*
+         * Pastikan status lesen Aktif wujud.
+         */
+            $activeStatus =
+                LsankLicenseStatus::query()
+                ->whereIn(
+                    'status_code',
+                    [
+                        'active',
+                        'aktif',
+                    ]
+                )
+                ->first();
+
+            if (!$activeStatus) {
+                $activeStatus =
+                    LsankLicenseStatus::query()
+                    ->where(
+                        'status_name',
+                        'Aktif'
+                    )
+                    ->first();
+            }
+
+            if (!$activeStatus) {
+                $activeStatus =
+                    LsankLicenseStatus::create([
+                        'status_name' =>
+                        'Aktif',
+
+                        'status_code' =>
+                        'active',
+
+                        'description' =>
+                        'Lesen sedang aktif.',
+                    ]);
+            }
+
+            /*
+         * Tentukan aktiviti terkini.
+         */
+            $selectedActivities =
+                $draftData['selected_activities']
+                ?? $draftMeta['selected_activities']
+                ?? [];
+
+            $selectedActivities = is_array(
+                $selectedActivities
+            )
+                ? collect($selectedActivities)
+                ->map(
+                    fn($item) =>
+                    trim((string) $item)
+                )
+                ->filter()
+                ->unique()
+                ->values()
+                ->all()
+                : [];
+
+            $activityName =
+                !empty($selectedActivities)
+                ? implode(
+                    ', ',
+                    $selectedActivities
+                )
+                : (
+                    $lockedApplication
+                    ->activity_name
+                    ?: $lockedApplication
+                    ->activity_type
+                    ?: $lockedApplication
+                    ->activity_details
+                    ?: $license
+                    ->activity_name
+                    ?: '-'
+                );
+
+            /*
+         * Jana QR baharu untuk tempoh lesen baharu.
+         */
+            $qrToken =
+                (string) Str::uuid();
+
+            $qrPayload = json_encode([
+                'license_no' =>
+                $license->license_no,
+
+                'application_id' =>
+                $sourceApplication
+                    ->application_id,
+
+                'token' =>
+                $qrToken,
+            ], JSON_UNESCAPED_SLASHES);
+
+            /*
+         * Kemas kini lesen asal.
+         *
+         * license_no, file_no dan application_id
+         * tidak berubah.
+         */
+            $license->forceFill([
+                'holder_name' =>
+                $lockedApplication
+                    ->business_name
+                    ?: $lockedApplication
+                    ->company_name
+                    ?: $lockedApplication
+                    ->applicant_name
+                    ?: $license
+                    ->holder_name
+                    ?: '-',
+
+                'license_type' =>
+                $lockedApplication
+                    ->license_type
+                    ?: $license
+                    ->license_type,
+
+                'activity_name' =>
+                $activityName,
+
+                'activity_location' =>
+                $lockedApplication
+                    ->activity_location
+                    ?: $license
+                    ->activity_location
+                    ?: '-',
+
+                'start_date' =>
+                $newStartDate->toDateString(),
+
+                'expiry_date' =>
+                $newExpiryDate->toDateString(),
+
+                'license_status_id' =>
+                $activeStatus
+                    ->license_status_id,
+
+                'qr_token' =>
+                $qrToken,
+
+                'qr_payload_hash' =>
+                hash(
+                    'sha256',
+                    $qrPayload ?: $qrToken
+                ),
+
+                'qr_code_path' =>
+                null,
+
+                'license_pdf_path' =>
+                null,
+
+                'generated_at' =>
+                now(),
+
+                'pdf_downloaded_at' =>
+                null,
+
+                'printed_at' =>
+                null,
+
+                'qr_downloaded_at' =>
+                null,
+            ])->save();
+
+            /*
+         * Pautkan semua invois pembaharuan
+         * kepada lesen asal.
+         */
+            LsankInvoice::query()
+                ->where(
+                    'application_id',
+                    $lockedApplication
+                        ->application_id
+                )
+                ->update([
+                    'license_id' =>
+                    $license->license_id,
+                ]);
+
+            /*
+         * Lengkapkan rekod pembaharuan.
+         */
+            $renewal->old_expiry_date =
+                $renewal->old_expiry_date
+                ?? $oldExpiryDate?->toDateString();
+
+            $renewal->new_expiry_date =
+                $newExpiryDate->toDateString();
+
+            $renewal->renewal_status =
+                LsankRenewalApplication::STATUS_COMPLETED;
+
+            $renewal->save();
+
+            /*
+         * Simpan metadata keputusan.
+         */
+            $reviewData['license_generation_status'] = 'updated';
+
+            $reviewData['license_id'] =
+                $license->license_id;
+
+            $reviewData['license_no'] =
+                $license->license_no;
+
+            $reviewData['license_start_date'] =
+                $newStartDate->toDateString();
+
+            $reviewData['license_expiry_date'] =
+                $newExpiryDate->toDateString();
+
+            $reviewData['license_updated_at'] =
+                now()->toDateTimeString();
+
+            $lockedApplication->review_data =
+                $reviewData;
+
+            $lockedApplication->save();
+
+            return $license->fresh();
+        });
+    }
+
+    /**
      * Salin data application pindaan ke application asal.
      *
      * License List dan License Detail membaca application asal
@@ -652,17 +1266,17 @@ class LicenseService
         LsankApplication $sourceApplication
     ): void {
         /*
-     * Field yang dibenarkan untuk dikemas kini.
-     *
-     * Jangan salin:
-     * - application_id
-     * - application_ref_no
-     * - application_category
-     * - application_status
-     * - payment_status
-     *
-     * Supaya identiti permohonan dan lesen asal kekal.
-     */
+        * Field yang dibenarkan untuk dikemas kini.
+        *
+        * Jangan salin:
+        * - application_id
+        * - application_ref_no
+        * - application_category
+        * - application_status
+        * - payment_status
+        *
+        * Supaya identiti permohonan dan lesen asal kekal.
+        */
         $fields = [
             'applicant_id',
 
@@ -791,6 +1405,67 @@ class LicenseService
                         'draft_data' =>
                         $amendmentWaterBody
                             ->draft_data,
+                    ]
+                );
+        }
+
+        /*
+ * Sync juga jadual teknikal
+ * permohonan pelepasan efluen.
+ */
+        $amendmentEffluent =
+            $amendmentApplication
+            ->effluent()
+            ->first();
+
+        if ($amendmentEffluent) {
+            LsankEffluentApplication::query()
+                ->updateOrCreate(
+                    [
+                        'application_id' =>
+                        $sourceApplication
+                            ->application_id,
+                    ],
+                    [
+                        'service_type_id' =>
+                        $amendmentEffluent
+                            ->service_type_id,
+
+                        'activity_location' =>
+                        $amendmentEffluent
+                            ->activity_location,
+
+                        'longitude' =>
+                        $amendmentEffluent
+                            ->longitude,
+
+                        'latitude' =>
+                        $amendmentEffluent
+                            ->latitude,
+
+                        'composition' =>
+                        $amendmentEffluent
+                            ->composition,
+
+                        'frequency' =>
+                        $amendmentEffluent
+                            ->frequency,
+
+                        'flow_rate' =>
+                        $amendmentEffluent
+                            ->flow_rate,
+
+                        'sampling_method' =>
+                        $amendmentEffluent
+                            ->sampling_method,
+
+                        'contingency_plan' =>
+                        $amendmentEffluent
+                            ->contingency_plan,
+
+                        'disposal_method' =>
+                        $amendmentEffluent
+                            ->disposal_method,
                     ]
                 );
         }

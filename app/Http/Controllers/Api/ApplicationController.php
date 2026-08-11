@@ -1853,9 +1853,25 @@ class ApplicationController extends Controller
             $this->displayLicenseType($application)
             === 'Aktiviti Badan Perairan';
 
+        $isEffluentApplication =
+            $this->displayLicenseType($application)
+            === 'Aktiviti Pelepasan Efluen';
+
         /*
- * Fallback untuk permohonan Badan Perairan apabila
- * nilai wang sekuriti tidak disimpan dalam review_data.
+ * Fi Caj Efluen datang daripada laporan teknikal.
+ */
+        if ($isEffluentApplication) {
+            $reviewData['invoice_fee_caj'] =
+                $this->moneyValue(
+                    $reviewData['invoice_fee_caj']
+                        ?? $reviewData['total_effluent_charge']
+                        ?? 0
+                );
+        }
+
+        /*
+ * Fallback Water sedia ada.
+ * Jangan ubah logic Water.
  */
         if ($securityFee <= 0 && $isWaterApplication) {
             if ($isOneOff) {
@@ -1871,13 +1887,116 @@ class ApplicationController extends Controller
             }
         }
 
+        /*
+ * Fallback Wang Sekuriti Efluen.
+ *
+ * Gunakan calculation yang sama seperti
+ * borang permohonan Efluen.
+ */
+        if ($securityFee <= 0 && $isEffluentApplication) {
+            $controllers = is_array(
+                $draftData['controllers'] ?? null
+            )
+                ? $draftData['controllers']
+                : [];
+
+            $serviceTypeId = (int) (
+                optional($application->effluent)->service_type_id
+                ?? $draftData['selected_service_type_id']
+                ?? $draftMeta['selected_service_type_id']
+                ?? 0
+            );
+
+            $area = (float) str_replace(
+                ',',
+                '',
+                (string) (
+                    $draftData['effluent_area_hectare']
+                    ?? $controllers['effluent_area_hectare']
+                    ?? 0
+                )
+            );
+
+            $count = (int) str_replace(
+                ',',
+                '',
+                (string) (
+                    $draftData['effluent_count']
+                    ?? $controllers['effluent_count']
+                    ?? 0
+                )
+            );
+
+            $livestockType = strtolower(
+                trim(
+                    (string) (
+                        $controllers['effluent_livestock_type']
+                        ?? ''
+                    )
+                )
+            );
+
+            $securityFee = match ($serviceTypeId) {
+                1 => $area > 10 && $area <= 20
+                    ? 10000
+                    : ($area >= 1 && $area <= 10
+                        ? 5000
+                        : 0),
+
+                2 => $area > 5 && $area <= 10
+                    ? 10000
+                    : ($area >= 1 && $area <= 5
+                        ? 5000
+                        : 0),
+
+                3 => $area > 10 && $area <= 20
+                    ? 20000
+                    : ($area >= 1 && $area <= 10
+                        ? 10000
+                        : 0),
+
+                4 => (
+                    (
+                        str_contains($livestockType, '2')
+                        && $count > 10000
+                    )
+                    || (
+                        str_contains($livestockType, '4')
+                        && $count > 50
+                    )
+                )
+                    ? 10000
+                    : 0,
+
+                5 => 10000,
+
+                6 => $count > 20
+                    ? 3000
+                    : 0,
+
+                7 => $area > 0 && $area < 20
+                    ? 20000
+                    : 0,
+
+                8 => 3000,
+
+                9 => $area > 10 && $area <= 20
+                    ? 10000
+                    : ($area >= 1 && $area <= 10
+                        ? 5000
+                        : 0),
+
+                default => 0,
+            };
+        }
+
         $reviewData['invoice_fee_sekuriti'] =
             $securityFee;
 
         /*
-     * Aktiviti yang dikecualikan tidak mempunyai
-     * Fi Lesen, Fi Caj atau Wang Sekuriti.
-     */
+        * Aktiviti yang dikecualikan tidak mempunyai
+        * Fi Lesen, Fi Caj atau Wang Sekuriti.
+        */
         if ($isExempt) {
             $reviewData['invoice_exempt'] = true;
 

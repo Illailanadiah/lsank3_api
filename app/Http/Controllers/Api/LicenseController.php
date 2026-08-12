@@ -23,12 +23,29 @@ class LicenseController extends Controller
      */
     public function index(Request $request)
     {
+
+        $userId = (int) (
+            $request->user()->user_id
+            ?? $request->user()->id
+            ?? 0
+        );
+
+        if ($userId <= 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Pengguna tidak sah.',
+            ], 401);
+        }
+
         $query = LsankLicense::query()
             ->with([
                 'application',
                 'status',
-                'terminationRequest'
+                'terminationRequest',
             ])
+            ->whereHas('application', function ($applicationQuery) use ($userId) {
+                $applicationQuery->where('user_id', $userId);
+            })
             ->latest('generated_at')
             ->latest('license_id');
 
@@ -539,24 +556,24 @@ class LicenseController extends Controller
                 ->first();
 
             if ($existingLicense) {
-    $existingLicense->forceFill([
-        'activity_location' =>
-            $this->resolveActivityLocation($application),
+                $existingLicense->forceFill([
+                    'activity_location' =>
+                    $this->resolveActivityLocation($application),
 
-        'latitude' =>
-            $this->resolveLatitude($application),
+                    'latitude' =>
+                    $this->resolveLatitude($application),
 
-        'longitude' =>
-            $this->resolveLongitude($application),
-    ])->save();
+                    'longitude' =>
+                    $this->resolveLongitude($application),
+                ])->save();
 
-    $this->ensureArtifacts($existingLicense);
+                $this->ensureArtifacts($existingLicense);
 
-    return $existingLicense->fresh([
-        'application',
-        'status',
-    ]);
-}
+                return $existingLicense->fresh([
+                    'application',
+                    'status',
+                ]);
+            }
             $activeStatusId = $this->activeLicenseStatusId();
 
             $licenseStartDate = data_get(
@@ -839,9 +856,9 @@ class LicenseController extends Controller
             'holder_name' => $license->holder_name,
             'license_type' => $license->license_type,
             'activity_name' => $license->activity_name,
-'activity_location' => $license->activity_location,
-'latitude' => $license->latitude,
-'longitude' => $license->longitude,
+            'activity_location' => $license->activity_location,
+            'latitude' => $license->latitude,
+            'longitude' => $license->longitude,
             'start_date' => optional(
                 $license->start_date
             )?->format('Y-m-d'),
@@ -1057,40 +1074,40 @@ class LicenseController extends Controller
     }
 
     private function resolveLatitude(
-    LsankApplication $application
-): ?float {
-    $value = $application->latitude;
+        LsankApplication $application
+    ): ?float {
+        $value = $application->latitude;
 
-    if ($value === null || $value === '') {
-        return null;
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        $latitude = (float) $value;
+
+        if ($latitude < -90 || $latitude > 90) {
+            return null;
+        }
+
+        return $latitude;
     }
 
-    $latitude = (float) $value;
+    private function resolveLongitude(
+        LsankApplication $application
+    ): ?float {
+        $value = $application->longitude;
 
-    if ($latitude < -90 || $latitude > 90) {
-        return null;
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        $longitude = (float) $value;
+
+        if ($longitude < -180 || $longitude > 180) {
+            return null;
+        }
+
+        return $longitude;
     }
-
-    return $latitude;
-}
-
-private function resolveLongitude(
-    LsankApplication $application
-): ?float {
-    $value = $application->longitude;
-
-    if ($value === null || $value === '') {
-        return null;
-    }
-
-    $longitude = (float) $value;
-
-    if ($longitude < -180 || $longitude > 180) {
-        return null;
-    }
-
-    return $longitude;
-}
 
     private function parseJsonMap(
         mixed $value
@@ -1294,12 +1311,12 @@ private function resolveLongitude(
             'holder_name' => $license->holder_name,
             'license_type' => $license->license_type,
             'activity_name' => $license->activity_name,
-'activity_location' => $license->activity_location,
+            'activity_location' => $license->activity_location,
 
-'latitude' => $license->latitude,
-'longitude' => $license->longitude,
+            'latitude' => $license->latitude,
+            'longitude' => $license->longitude,
 
-'start_date' => optional(
+            'start_date' => optional(
                 $license->start_date
             )?->format('Y-m-d'),
             'expiry_date' => optional(

@@ -219,6 +219,26 @@ Route::middleware('auth:sanctum')->group(function () {
         ])->whereNumber('application')
             ->whereNumber('invoice');
 
+        Route::post(
+            '/{application}/final-invoices/{invoice}/pay',
+            [
+                EffluentApplicationController::class,
+                'payFinalInvoice',
+            ]
+        )
+            ->whereNumber('application')
+            ->whereNumber('invoice');
+
+        Route::post(
+            '/{application}/final-invoices/{invoice}/pay',
+            [
+                EffluentApplicationController::class,
+                'payFinalInvoice',
+            ]
+        )
+            ->whereNumber('application')
+            ->whereNumber('invoice');
+
         Route::delete('/{application}/draft', [
             EffluentApplicationController::class,
             'destroyDraft',

@@ -21,42 +21,40 @@ class LsankLicense extends Model
 
     public $timestamps = true;
 
-    protected $fillable = [
-        'license_no',
-        'file_no',
-        'application_id',
-        'holder_name',
-        'license_type',
-        'activity_name',
-        'activity_location',
-        'start_date',
-        'expiry_date',
-        'license_status_id',
-        'qr_token',
-        'qr_payload_hash',
-        'qr_code_path',
-        'license_pdf_path',
-        'generated_at',
-        'pdf_downloaded_at',
-        'printed_at',
-        'qr_downloaded_at',
-    ];
+   protected $fillable = [
+    'license_no',
+    'file_no',
+    'application_id',
+    'holder_name',
+    'license_type',
+    'activity_name',
+    'activity_location',
+    'latitude',
+    'longitude',
+    'start_date',
+    'expiry_date',
+    'license_status_id',
+    'qr_token',
+    'qr_payload_hash',
+    'qr_code_path',
+    'license_pdf_path',
+    'generated_at',
+    'pdf_downloaded_at',
+    'printed_at',
+    'qr_downloaded_at',
+];
 
-    protected $casts = [
-        'license_id' => 'integer',
-        'application_id' => 'integer',
-        'license_status_id' => 'integer',
+   protected $casts = [
+    'latitude' => 'decimal:8',
+    'longitude' => 'decimal:8',
+    'start_date' => 'date',
+    'expiry_date' => 'date',
+    'generated_at' => 'datetime',
+    'pdf_downloaded_at' => 'datetime',
+    'printed_at' => 'datetime',
+    'qr_downloaded_at' => 'datetime',
+];
 
-        'start_date' => 'date',
-        'expiry_date' => 'date',
-
-        'generated_at' => 'datetime',
-        'pdf_downloaded_at' => 'datetime',
-        'printed_at' => 'datetime',
-        'qr_downloaded_at' => 'datetime',
-        'created_at' => 'datetime',
-        'updated_at' => 'datetime',
-    ];
 
     protected $with = [
         'terminationRequest',

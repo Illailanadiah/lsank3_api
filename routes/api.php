@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\RenewalController;
 use App\Http\Controllers\Api\BillplzController;
 use App\Http\Controllers\Api\AmendmentController;
 use App\Http\Controllers\Api\GoogleMapsController;
+use App\Http\Controllers\Api\NoticeController;
 
 /*
 |--------------------------------------------------------------------------
@@ -454,4 +455,44 @@ Route::middleware('auth:sanctum')->group(function () {
     )
         ->whereNumber('amendmentId')
         ->name('license-amendments.enable-form-a');
+
+Route::prefix('admin/notices')->group(function () {
+
+    Route::get('/next-number', [
+        NoticeController::class,
+        'nextNumber',
+    ]);
+
+    Route::get('/', [
+        NoticeController::class,
+        'index',
+    ]);
+
+    Route::post('/', [
+        NoticeController::class,
+        'store',
+    ]);
+
+    Route::get('/{notice}', [
+        NoticeController::class,
+        'show',
+    ])->whereNumber('notice');
+
+    Route::put('/{notice}', [
+        NoticeController::class,
+        'update',
+    ])->whereNumber('notice');
+
+    Route::patch('/{notice}/status', [
+        NoticeController::class,
+        'updateStatus',
+    ])->whereNumber('notice');
+
+    Route::delete('/{notice}', [
+        NoticeController::class,
+        'destroy',
+    ])->whereNumber('notice');
+
+});
+
 });

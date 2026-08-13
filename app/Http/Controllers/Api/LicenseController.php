@@ -557,21 +557,35 @@ class LicenseController extends Controller
 
             if ($existingLicense) {
                 $existingLicense->forceFill([
+                    'file_no' =>
+                        $application->application_ref_no,
+
+                    'holder_name' =>
+                        $this->resolveHolderName($application),
+
+                    'license_type' =>
+                        $this->resolveLicenseType($application),
+
+                    'activity_name' =>
+                        $this->resolveActivityName($application),
+
                     'activity_location' =>
-                    $this->resolveActivityLocation($application),
+                        $this->resolveActivityLocation($application),
 
                     'latitude' =>
-                    $this->resolveLatitude($application),
+                        $this->resolveLatitude($application),
 
                     'longitude' =>
-                    $this->resolveLongitude($application),
+                        $this->resolveLongitude($application),
                 ])->save();
 
+                $this->ensureArtifacts($existingLicense);
                 $this->ensureArtifacts($existingLicense);
 
                 return $existingLicense->fresh([
                     'application',
                     'status',
+                    'terminationRequest',
                 ]);
             }
             $activeStatusId = $this->activeLicenseStatusId();
@@ -612,8 +626,11 @@ class LicenseController extends Controller
                 'activity_location' => $this->resolveActivityLocation(
                     $application
                 ),
-                'latitude' => $application->latitude,
-                'longitude' => $application->longitude,
+                'latitude' =>
+                    $this->resolveLatitude($application),
+
+                'longitude' =>
+                    $this->resolveLongitude($application),
                 'start_date' => $licenseStartDate,
                 'expiry_date' => $licenseEndDate,
                 'license_status_id' => $activeStatusId,
@@ -630,6 +647,7 @@ class LicenseController extends Controller
             return $license->fresh([
                 'application',
                 'status',
+                'terminationRequest',
             ]);
         });
     }
@@ -854,11 +872,30 @@ class LicenseController extends Controller
             'license_no' => $license->license_no,
             'file_no' => $license->file_no,
             'holder_name' => $license->holder_name,
+            'holder_address' =>
+            $this->resolveHolderAddress($license->application),
+            'registration_no' =>
+            $this->resolveRegistrationNo($license->application),
+            'business_phone' =>
+            $this->resolveBusinessPhone($license->application),
             'license_type' => $license->license_type,
             'activity_name' => $license->activity_name,
-            'activity_location' => $license->activity_location,
-            'latitude' => $license->latitude,
-            'longitude' => $license->longitude,
+'activity_location' =>
+    (
+        $license->activity_location !== null &&
+        trim((string) $license->activity_location) !== '' &&
+        trim((string) $license->activity_location) !== '-'
+    )
+        ? $license->activity_location
+        : $license->application?->activity_location,
+'latitude' =>
+    $license->latitude !== null
+        ? $license->latitude
+        : $license->application?->latitude,
+'longitude' =>
+    $license->longitude !== null
+        ? $license->longitude
+        : $license->application?->longitude,
             'start_date' => optional(
                 $license->start_date
             )?->format('Y-m-d'),
@@ -1077,19 +1114,26 @@ class LicenseController extends Controller
         LsankApplication $application
     ): ?float {
         $value = $application->latitude;
-
+        if ($value === null || $value === '') {
+            return null;
+        }
         if ($value === null || $value === '') {
             return null;
         }
 
         $latitude = (float) $value;
+        $latitude = (float) $value;
 
+        if ($latitude < -90 || $latitude > 90) {
+            return null;
+        }
         if ($latitude < -90 || $latitude > 90) {
             return null;
         }
 
         return $latitude;
     }
+   
 
     private function resolveLongitude(
         LsankApplication $application
@@ -1099,14 +1143,102 @@ class LicenseController extends Controller
         if ($value === null || $value === '') {
             return null;
         }
+        if ($value === null || $value === '') {
+            return null;
+        }
 
+        $longitude = (float) $value;
         $longitude = (float) $value;
 
         if ($longitude < -180 || $longitude > 180) {
             return null;
         }
+        if ($longitude < -180 || $longitude > 180) {
+            return null;
+        }
 
         return $longitude;
+    }
+
+    private function resolveHolderAddress(
+        ?LsankApplication $application
+    ): ?string {
+        if ($application === null) {
+            return null;
+        }
+
+        $value = trim((string) (
+            data_get($application, 'business_address')
+            ?? data_get($application, 'applicant_address')
+            ?? data_get($application, 'address')
+            ?? ''
+        ));
+
+        return $value !== '' && $value !== '-'
+            ? $value
+            : null;
+    }
+
+    private function resolveRegistrationNo(
+        ?LsankApplication $application
+    ): ?string {
+        if ($application === null) {
+            return null;
+        }
+
+        $value = trim((string) (
+            data_get($application, 'registration_no')
+            ?? data_get($application, 'company_registration_no')
+            ?? data_get($application, 'business_registration_no')
+            ?? data_get($application, 'identity_no')
+            ?? data_get($application, 'identification_no')
+            ?? data_get($application, 'ic_no')
+            ?? ''
+        ));
+
+        return $value !== '' && $value !== '-'
+            ? $value
+            : null;
+    }
+
+    private function resolveBusinessPhone(
+        ?LsankApplication $application
+    ): ?string {
+        if ($application === null) {
+            return null;
+        }
+
+        $value = trim((string) (
+            data_get($application, 'business_phone')
+            ?? data_get($application, 'applicant_phone')
+            ?? data_get($application, 'phone')
+            ?? data_get($application, 'mobile_no')
+            ?? data_get($application, 'contact_no')
+            ?? ''
+        ));
+
+        return $value !== '' && $value !== '-'
+            ? $value
+            : null;
+    }
+
+    private function resolveBusinessEmail(
+        ?LsankApplication $application
+    ): ?string {
+        if ($application === null) {
+            return null;
+        }
+
+        $value = trim((string) (
+            data_get($application, 'business_email')
+            ?? data_get($application, 'applicant_email')
+            ?? data_get($application, 'email')
+            ?? ''
+        ));
+
+        return $value !== '' && $value !== '-'
+            ? $value
+            : null;
     }
 
     private function parseJsonMap(
@@ -1284,6 +1416,20 @@ class LicenseController extends Controller
             'terminationRequest',
         ]);
 
+        $application = $license->application;
+
+        $holderAddress =
+            $this->resolveHolderAddress($application);
+
+        $registrationNo =
+            $this->resolveRegistrationNo($application);
+
+        $businessPhone =
+            $this->resolveBusinessPhone($application);
+
+        $businessEmail =
+            $this->resolveBusinessEmail($application);
+
         $securityInvoice = LsankInvoice::query()
             ->where(
                 'application_id',
@@ -1308,13 +1454,118 @@ class LicenseController extends Controller
             'application_id' => $license->application_id,
             'license_no' => $license->license_no,
             'file_no' => $license->file_no,
-            'holder_name' => $license->holder_name,
-            'license_type' => $license->license_type,
-            'activity_name' => $license->activity_name,
-            'activity_location' => $license->activity_location,
+            'holder_name' =>
+            $license->holder_name,
 
-            'latitude' => $license->latitude,
-            'longitude' => $license->longitude,
+            'holder_address' =>
+            $holderAddress,
+
+            'registration_no' =>
+            $registrationNo,
+
+            'business_phone' =>
+            $businessPhone,
+
+            'business_email' =>
+            $businessEmail,
+
+            'license_type' =>
+            $license->license_type,
+
+            'activity_name' =>
+            $license->activity_name,
+
+            'activity_location' =>
+            (
+                $license->activity_location !== null &&
+                trim((string) $license->activity_location) !== '' &&
+                trim((string) $license->activity_location) !== '-'
+            )
+                ? $license->activity_location
+                : data_get($application, 'activity_location'),
+
+            'latitude' =>
+            $license->latitude !== null
+                ? $license->latitude
+                : data_get($application, 'latitude'),
+
+            'longitude' =>
+            $license->longitude !== null
+                ? $license->longitude
+                : data_get($application, 'longitude'),
+
+            'application' => $application
+                ? [
+                    'application_id' =>
+                    $application->application_id,
+
+                    'application_ref_no' =>
+                    $application->application_ref_no,
+
+                    'application_type' =>
+                    $application->application_type,
+
+                    'applicant_name' =>
+                    data_get($application, 'applicant_name'),
+
+                    'business_name' =>
+                    data_get($application, 'business_name'),
+
+                    'company_name' =>
+                    data_get($application, 'company_name'),
+
+                    'registration_no' =>
+                    $registrationNo,
+
+                    'company_registration_no' =>
+                    data_get(
+                        $application,
+                        'company_registration_no'
+                    ),
+
+                    'business_address' =>
+                    data_get($application, 'business_address'),
+
+                    'applicant_address' =>
+                    data_get($application, 'applicant_address'),
+
+                    'address' =>
+                    data_get($application, 'address'),
+
+                    'business_phone' =>
+                    $businessPhone,
+
+                    'applicant_phone' =>
+                    data_get($application, 'applicant_phone'),
+
+                    'phone' =>
+                    data_get($application, 'phone'),
+
+                    'business_email' =>
+                    $businessEmail,
+
+                    'applicant_email' =>
+                    data_get($application, 'applicant_email'),
+
+                    'email' =>
+                    data_get($application, 'email'),
+
+                    'activity_name' =>
+                    data_get($application, 'activity_name'),
+
+                    'activity_type' =>
+                    data_get($application, 'activity_type'),
+
+                    'activity_location' =>
+                    data_get($application, 'activity_location'),
+
+                    'latitude' =>
+                    data_get($application, 'latitude'),
+
+                    'longitude' =>
+                    data_get($application, 'longitude'),
+                ]
+                : null,
 
             'start_date' => optional(
                 $license->start_date

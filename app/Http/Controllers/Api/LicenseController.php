@@ -106,6 +106,145 @@ class LicenseController extends Controller
         ]);
     }
 
+    public function adminIndex(Request $request)
+{
+    if (!$this->canViewAllLicenses($request->user())) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Anda tidak dibenarkan melihat semua lesen.',
+        ], 403);
+    }
+
+    $query = LsankLicense::query()
+        ->with([
+            'application',
+            'status',
+            'terminationRequest',
+        ])
+        ->latest('generated_at')
+        ->latest('license_id');
+
+    if ($request->filled('status')) {
+        $status = trim((string) $request->input('status'));
+
+        $query->whereHas('status', function ($statusQuery) use ($status) {
+            $statusQuery
+                ->where('status_code', $status)
+                ->orWhere('status_name', $status);
+        });
+    }
+
+    if ($request->filled('license_type')) {
+        $query->where(
+            'license_type',
+            trim((string) $request->input('license_type'))
+        );
+    }
+
+    if ($request->filled('search')) {
+        $search = trim((string) $request->input('search'));
+
+        $query->where(function ($builder) use ($search) {
+            $builder
+                ->where('license_no', 'like', "%{$search}%")
+                ->orWhere('file_no', 'like', "%{$search}%")
+                ->orWhere('holder_name', 'like', "%{$search}%")
+                ->orWhere('license_type', 'like', "%{$search}%")
+                ->orWhere('activity_name', 'like', "%{$search}%")
+                ->orWhere('activity_location', 'like', "%{$search}%");
+        });
+    }
+
+    $licenses = $query->get()->map(
+        fn (LsankLicense $license) =>
+            $this->formatLicense($license)
+    );
+
+    return response()->json([
+        'success' => true,
+        'licenses' => $licenses,
+        'total' => $licenses->count(),
+    ]);
+}
+
+private function canViewAllLicenses(mixed $user): bool
+{
+    if ($user === null) {
+        return false;
+    }
+
+    $email = strtolower(
+        trim((string) data_get($user, 'email', ''))
+    );
+
+    if ($email === 'admin@lsank.gov.my') {
+        return true;
+    }
+
+    $roleCandidates = [
+        data_get($user, 'role.role_name'),
+        data_get($user, 'role.name'),
+        data_get($user, 'role.role_code'),
+        data_get($user, 'role.code'),
+        data_get($user, 'role_name'),
+        data_get($user, 'role_code'),
+        data_get($user, 'user_role'),
+        data_get($user, 'user_type'),
+        is_string(data_get($user, 'role'))
+            ? data_get($user, 'role')
+            : null,
+    ];
+
+    foreach ($roleCandidates as $candidate) {
+        if (!is_scalar($candidate)) {
+            continue;
+        }
+
+        $role = strtolower(
+            trim((string) $candidate)
+        );
+
+        $role = str_replace(
+            ['_', '-'],
+            ' ',
+            $role
+        );
+
+        $role = preg_replace(
+            '/\s+/',
+            ' ',
+            $role
+        );
+
+        if (
+            in_array(
+                $role,
+                [
+                    'admin',
+                    'administrator',
+                    'pentadbiran',
+                    'ketua pengarah',
+                    'ketua unit efluen',
+                    'ketua bahagian efluen',
+                    'teknikal efluen',
+                    'ketua unit badan perairan',
+                    'ketua bahagian badan perairan',
+                    'teknikal badan perairan',
+                    'penguatkuasa',
+                    'kewangan',
+                    'pegawai undang undang',
+                    'penguatkuasa perundangan',
+                    'penolong pegawai undang undang',
+                ],
+                true
+            )
+        ) {
+            return true;
+        }
+    }
+
+    return false;
+}
     /**
      * Applicant submits a license termination request.
      *

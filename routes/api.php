@@ -456,43 +456,63 @@ Route::middleware('auth:sanctum')->group(function () {
         ->whereNumber('amendmentId')
         ->name('license-amendments.enable-form-a');
 
-Route::prefix('admin/notices')->group(function () {
+    /*
+    |--------------------------------------------------------------------------
+    | Admin Side - Licenses
+    |--------------------------------------------------------------------------
+    |
+    | Admin/staff endpoint for retrieving all generated licenses.
+    | Keep this OUTSIDE the admin/notices prefix.
+    |
+    */
 
-    Route::get('/next-number', [
-        NoticeController::class,
-        'nextNumber',
-    ]);
+    Route::get('/admin/licenses', [
+        LicenseController::class,
+        'adminIndex',
+    ])->name('admin.licenses.index');
 
-    Route::get('/', [
-        NoticeController::class,
-        'index',
-    ]);
+    /*
+    |--------------------------------------------------------------------------
+    | Admin Side - Notices
+    |--------------------------------------------------------------------------
+    */
 
-    Route::post('/', [
-        NoticeController::class,
-        'store',
-    ]);
+    Route::prefix('admin/notices')->group(function () {
 
-    Route::get('/{notice}', [
-        NoticeController::class,
-        'show',
-    ])->whereNumber('notice');
+        Route::get('/next-number', [
+            NoticeController::class,
+            'nextNumber',
+        ]);
 
-    Route::put('/{notice}', [
-        NoticeController::class,
-        'update',
-    ])->whereNumber('notice');
+        Route::get('/', [
+            NoticeController::class,
+            'index',
+        ]);
 
-    Route::patch('/{notice}/status', [
-        NoticeController::class,
-        'updateStatus',
-    ])->whereNumber('notice');
+        Route::post('/', [
+            NoticeController::class,
+            'store',
+        ]);
 
-    Route::delete('/{notice}', [
-        NoticeController::class,
-        'destroy',
-    ])->whereNumber('notice');
+        Route::get('/{notice}', [
+            NoticeController::class,
+            'show',
+        ])->whereNumber('notice');
 
-});
+        Route::put('/{notice}', [
+            NoticeController::class,
+            'update',
+        ])->whereNumber('notice');
+
+        Route::patch('/{notice}/status', [
+            NoticeController::class,
+            'updateStatus',
+        ])->whereNumber('notice');
+
+        Route::delete('/{notice}', [
+            NoticeController::class,
+            'destroy',
+        ])->whereNumber('notice');
+    });
 
 });

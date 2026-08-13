@@ -1114,10 +1114,6 @@ class LicenseController extends Controller
         LsankApplication $application
     ): ?float {
         $value = $application->latitude;
-        LsankApplication $application
-    ): ?float {
-        $value = $application->latitude;
-
         if ($value === null || $value === '') {
             return null;
         }
@@ -1137,13 +1133,8 @@ class LicenseController extends Controller
 
         return $latitude;
     }
-        return $latitude;
-    }
+   
 
-    private function resolveLongitude(
-        LsankApplication $application
-    ): ?float {
-        $value = $application->longitude;
     private function resolveLongitude(
         LsankApplication $application
     ): ?float {
@@ -1576,7 +1567,6 @@ class LicenseController extends Controller
                 ]
                 : null,
 
-            'start_date' => optional(
             'start_date' => optional(
                 $license->start_date
             )?->format('Y-m-d'),

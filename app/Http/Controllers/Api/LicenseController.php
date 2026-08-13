@@ -23,7 +23,6 @@ class LicenseController extends Controller
      */
     public function index(Request $request)
     {
-
         $userId = (int) (
             $request->user()->user_id
             ?? $request->user()->id
@@ -37,15 +36,17 @@ class LicenseController extends Controller
             ], 401);
         }
 
+        $applicationIds = LsankApplication::query()
+            ->where('user_id', $userId)
+            ->pluck('application_id');
+
         $query = LsankLicense::query()
             ->with([
                 'application',
                 'status',
                 'terminationRequest',
             ])
-            ->whereHas('application', function ($applicationQuery) use ($userId) {
-                $applicationQuery->where('user_id', $userId);
-            })
+            ->whereIn('application_id', $applicationIds)
             ->latest('generated_at')
             ->latest('license_id');
 
@@ -53,7 +54,8 @@ class LicenseController extends Controller
             $status = trim((string) $request->input('status'));
 
             $query->whereHas('status', function ($statusQuery) use ($status) {
-                $statusQuery->where('status_code', $status)
+                $statusQuery
+                    ->where('status_code', $status)
                     ->orWhere('status_name', $status);
             });
         }
@@ -356,6 +358,58 @@ class LicenseController extends Controller
                 $this->formatLicense($license),
             ],
         ], 201);
+    }
+
+    public function adminIndex(Request $request)
+    {
+        $query = LsankLicense::query()
+            ->with([
+                'application',
+                'status',
+                'terminationRequest',
+            ])
+            ->latest('generated_at')
+            ->latest('license_id');
+
+        if ($request->filled('status')) {
+            $status = trim((string) $request->input('status'));
+
+            $query->whereHas('status', function ($statusQuery) use ($status) {
+                $statusQuery
+                    ->where('status_code', $status)
+                    ->orWhere('status_name', $status);
+            });
+        }
+
+        if ($request->filled('license_type')) {
+            $query->where(
+                'license_type',
+                trim((string) $request->input('license_type'))
+            );
+        }
+
+        if ($request->filled('search')) {
+            $search = trim((string) $request->input('search'));
+
+            $query->where(function ($builder) use ($search) {
+                $builder
+                    ->where('license_no', 'like', "%{$search}%")
+                    ->orWhere('file_no', 'like', "%{$search}%")
+                    ->orWhere('holder_name', 'like', "%{$search}%")
+                    ->orWhere('license_type', 'like', "%{$search}%")
+                    ->orWhere('activity_name', 'like', "%{$search}%")
+                    ->orWhere('activity_location', 'like', "%{$search}%");
+            });
+        }
+
+        $licenses = $query->get()->map(
+            fn(LsankLicense $license) => $this->formatLicense($license)
+        );
+
+        return response()->json([
+            'success' => true,
+            'licenses' => $licenses,
+        ]);
     }
 
     public function approveTermination(
@@ -1284,6 +1338,12 @@ class LicenseController extends Controller
             'terminationRequest',
         ]);
 
+        $application = $license->application;
+
+        $applicationType = strtolower(
+            trim((string) ($application?->application_type ?? ''))
+        );
+
         $securityInvoice = LsankInvoice::query()
             ->where(
                 'application_id',
@@ -1306,6 +1366,18 @@ class LicenseController extends Controller
         return [
             'license_id' => $license->license_id,
             'application_id' => $license->application_id,
+            'application_type' => $applicationType,
+
+            'application' => $application ? [
+                'application_id' => $application->application_id,
+                'application_type' => $applicationType,
+                'application_ref_no' => $application->application_ref_no,
+                'business_name' => $application->business_name,
+                'applicant_name' => $application->applicant_name,
+                'activity_name' => $application->activity_name,
+                'activity_location' => $application->activity_location,
+            ] : null,
+
             'license_no' => $license->license_no,
             'file_no' => $license->file_no,
             'holder_name' => $license->holder_name,

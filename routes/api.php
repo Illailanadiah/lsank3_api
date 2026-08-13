@@ -79,6 +79,10 @@ Route::middleware('auth:sanctum')->group(function () {
         AuthController::class,
         'updateAdminProfile',
     ]);
+    Route::get('/admin/licenses', [
+        LicenseController::class,
+        'adminIndex'
+    ]);
 
     /*
     |--------------------------------------------------------------------------

@@ -499,58 +499,6 @@ private function canViewAllLicenses(mixed $user): bool
         ], 201);
     }
 
-    public function adminIndex(Request $request)
-    {
-        $query = LsankLicense::query()
-            ->with([
-                'application',
-                'status',
-                'terminationRequest',
-            ])
-            ->latest('generated_at')
-            ->latest('license_id');
-
-        if ($request->filled('status')) {
-            $status = trim((string) $request->input('status'));
-
-            $query->whereHas('status', function ($statusQuery) use ($status) {
-                $statusQuery
-                    ->where('status_code', $status)
-                    ->orWhere('status_name', $status);
-            });
-        }
-
-        if ($request->filled('license_type')) {
-            $query->where(
-                'license_type',
-                trim((string) $request->input('license_type'))
-            );
-        }
-
-        if ($request->filled('search')) {
-            $search = trim((string) $request->input('search'));
-
-            $query->where(function ($builder) use ($search) {
-                $builder
-                    ->where('license_no', 'like', "%{$search}%")
-                    ->orWhere('file_no', 'like', "%{$search}%")
-                    ->orWhere('holder_name', 'like', "%{$search}%")
-                    ->orWhere('license_type', 'like', "%{$search}%")
-                    ->orWhere('activity_name', 'like', "%{$search}%")
-                    ->orWhere('activity_location', 'like', "%{$search}%");
-            });
-        }
-
-        $licenses = $query->get()->map(
-            fn(LsankLicense $license) => $this->formatLicense($license)
-        );
-
-        return response()->json([
-            'success' => true,
-            'licenses' => $licenses,
-        ]);
-    }
-
     public function approveTermination(
         Request $request,
         LsankLicense $license
@@ -773,8 +721,6 @@ private function canViewAllLicenses(mixed $user): bool
                 ])->save();
 
                 $this->ensureArtifacts($existingLicense);
-                $this->ensureArtifacts($existingLicense);
-
                 return $existingLicense->fresh([
                     'application',
                     'status',
@@ -1649,17 +1595,6 @@ private function canViewAllLicenses(mixed $user): bool
             'license_id' => $license->license_id,
             'application_id' => $license->application_id,
             'application_type' => $applicationType,
-
-            'application' => $application ? [
-                'application_id' => $application->application_id,
-                'application_type' => $applicationType,
-                'application_ref_no' => $application->application_ref_no,
-                'business_name' => $application->business_name,
-                'applicant_name' => $application->applicant_name,
-                'activity_name' => $application->activity_name,
-                'activity_location' => $application->activity_location,
-            ] : null,
-
             'license_no' => $license->license_no,
             'file_no' => $license->file_no,
             'holder_name' =>

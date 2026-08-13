@@ -23,12 +23,29 @@ class LicenseController extends Controller
      */
     public function index(Request $request)
     {
+
+        $userId = (int) (
+            $request->user()->user_id
+            ?? $request->user()->id
+            ?? 0
+        );
+
+        if ($userId <= 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Pengguna tidak sah.',
+            ], 401);
+        }
+
         $query = LsankLicense::query()
             ->with([
                 'application',
                 'status',
-                'terminationRequest'
+                'terminationRequest',
             ])
+            ->whereHas('application', function ($applicationQuery) use ($userId) {
+                $applicationQuery->where('user_id', $userId);
+            })
             ->latest('generated_at')
             ->latest('license_id');
 
@@ -563,6 +580,7 @@ class LicenseController extends Controller
                 ])->save();
 
                 $this->ensureArtifacts($existingLicense);
+                $this->ensureArtifacts($existingLicense);
 
                 return $existingLicense->fresh([
                     'application',
@@ -1096,20 +1114,36 @@ class LicenseController extends Controller
         LsankApplication $application
     ): ?float {
         $value = $application->latitude;
+        LsankApplication $application
+    ): ?float {
+        $value = $application->latitude;
 
+        if ($value === null || $value === '') {
+            return null;
+        }
         if ($value === null || $value === '') {
             return null;
         }
 
         $latitude = (float) $value;
+        $latitude = (float) $value;
 
+        if ($latitude < -90 || $latitude > 90) {
+            return null;
+        }
         if ($latitude < -90 || $latitude > 90) {
             return null;
         }
 
         return $latitude;
     }
+        return $latitude;
+    }
 
+    private function resolveLongitude(
+        LsankApplication $application
+    ): ?float {
+        $value = $application->longitude;
     private function resolveLongitude(
         LsankApplication $application
     ): ?float {
@@ -1118,9 +1152,16 @@ class LicenseController extends Controller
         if ($value === null || $value === '') {
             return null;
         }
+        if ($value === null || $value === '') {
+            return null;
+        }
 
         $longitude = (float) $value;
+        $longitude = (float) $value;
 
+        if ($longitude < -180 || $longitude > 180) {
+            return null;
+        }
         if ($longitude < -180 || $longitude > 180) {
             return null;
         }
@@ -1535,6 +1576,7 @@ class LicenseController extends Controller
                 ]
                 : null,
 
+            'start_date' => optional(
             'start_date' => optional(
                 $license->start_date
             )?->format('Y-m-d'),

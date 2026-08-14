@@ -13,7 +13,7 @@ use App\Http\Controllers\Api\BillplzController;
 use App\Http\Controllers\Api\AmendmentController;
 use App\Http\Controllers\Api\GoogleMapsController;
 use App\Http\Controllers\Api\NoticeController;
-
+use App\Http\Controllers\Api\InspectionReportController;
 /*
 |--------------------------------------------------------------------------
 | Public Routes
@@ -517,6 +517,63 @@ Route::middleware('auth:sanctum')->group(function () {
             NoticeController::class,
             'destroy',
         ])->whereNumber('notice');
+
+
+
+
+
     });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Admin Side - Inspection Reports
+    |--------------------------------------------------------------------------
+    |
+    | Keep this OUTSIDE the admin/notices prefix so the frontend endpoint is:
+    | /api/admin/reports/inspection
+    |
+    */
+
+    Route::prefix('admin/reports/inspection')->group(function () {
+
+        Route::get('/', [
+            InspectionReportController::class,
+            'index',
+        ])->name('admin.inspection-reports.index');
+
+        Route::post('/', [
+            InspectionReportController::class,
+            'store',
+        ])->name('admin.inspection-reports.store');
+
+        Route::get('/{report}', [
+            InspectionReportController::class,
+            'show',
+        ])
+            ->whereNumber('report')
+            ->name('admin.inspection-reports.show');
+
+        Route::put('/{report}', [
+            InspectionReportController::class,
+            'update',
+        ])
+            ->whereNumber('report')
+            ->name('admin.inspection-reports.update');
+
+        Route::delete('/{report}', [
+            InspectionReportController::class,
+            'destroy',
+        ])
+            ->whereNumber('report')
+            ->name('admin.inspection-reports.destroy');
+
+        Route::patch('/{report}/cancel', [
+    InspectionReportController::class,
+    'cancel',
+])
+    ->whereNumber('report')
+    ->name('admin.inspection-reports.cancel');
+    });
+
 
 });

@@ -14,6 +14,8 @@ use App\Http\Controllers\Api\AmendmentController;
 use App\Http\Controllers\Api\GoogleMapsController;
 use App\Http\Controllers\Api\NoticeController;
 use App\Http\Controllers\Api\InspectionReportController;
+use App\Http\Controllers\Api\CivilCaseController;
+use App\Http\Controllers\Api\CriminalCaseController;
 /*
 |--------------------------------------------------------------------------
 | Public Routes
@@ -574,6 +576,85 @@ Route::middleware('auth:sanctum')->group(function () {
     ->whereNumber('report')
     ->name('admin.inspection-reports.cancel');
     });
+
+    Route::prefix('admin/legal/civil-cases')->group(function () {
+
+    Route::get('/next-number', [
+        CivilCaseController::class,
+        'nextNumber',
+    ])->name('admin.civil-cases.next-number');
+
+    Route::get('/', [
+        CivilCaseController::class,
+        'index',
+    ])->name('admin.civil-cases.index');
+
+    Route::post('/', [
+        CivilCaseController::class,
+        'store',
+    ])->name('admin.civil-cases.store');
+
+    Route::get('/{case}', [
+        CivilCaseController::class,
+        'show',
+    ])
+        ->whereNumber('case')
+        ->name('admin.civil-cases.show');
+
+    Route::put('/{case}', [
+        CivilCaseController::class,
+        'update',
+    ])
+        ->whereNumber('case')
+        ->name('admin.civil-cases.update');
+
+    Route::delete('/{case}', [
+        CivilCaseController::class,
+        'destroy',
+    ])
+        ->whereNumber('case')
+        ->name('admin.civil-cases.destroy');
+});
+
+
+Route::prefix('admin/legal/criminal-cases')->group(function () {
+
+    Route::get('/next-number', [
+        CriminalCaseController::class,
+        'nextNumber',
+    ])->name('admin.criminal-cases.next-number');
+
+    Route::get('/', [
+        CriminalCaseController::class,
+        'index',
+    ])->name('admin.criminal-cases.index');
+
+    Route::post('/', [
+        CriminalCaseController::class,
+        'store',
+    ])->name('admin.criminal-cases.store');
+
+    Route::get('/{case}', [
+        CriminalCaseController::class,
+        'show',
+    ])
+        ->whereNumber('case')
+        ->name('admin.criminal-cases.show');
+
+    Route::put('/{case}', [
+        CriminalCaseController::class,
+        'update',
+    ])
+        ->whereNumber('case')
+        ->name('admin.criminal-cases.update');
+
+    Route::delete('/{case}', [
+        CriminalCaseController::class,
+        'destroy',
+    ])
+        ->whereNumber('case')
+        ->name('admin.criminal-cases.destroy');
+});
 
 
 });

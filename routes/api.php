@@ -18,6 +18,8 @@ use App\Http\Controllers\Api\CivilCaseController;
 use App\Http\Controllers\Api\CriminalCaseController;
 use App\Http\Controllers\Api\UserNoticeController;
 use App\Http\Controllers\Api\StatementController;
+use App\Http\Controllers\Api\LegalReferralController;
+
 
 /*
 |--------------------------------------------------------------------------
@@ -725,6 +727,49 @@ Route::prefix('notices')->group(function () {
         UserNoticeController::class,
         'acknowledge',
     ])->whereNumber('notice');
+});
+
+
+Route::get(
+    'legal-status/me',
+    [
+        LegalReferralController::class,
+        'myStatus',
+    ]
+);
+
+// Keep these inside auth:sanctum.
+Route::prefix(
+    'admin/legal/referrals'
+)->group(function () {
+    // GET is readable by staff so all departments can see
+    // triggered/under-legal indicators.
+    Route::get(
+        '/',
+        [
+            LegalReferralController::class,
+            'index',
+        ]
+    );
+
+    Route::get(
+        '/{referral}',
+        [
+            LegalReferralController::class,
+            'show',
+        ]
+    )->whereNumber('referral');
+
+    // Only Legal can change referral status.
+    Route::patch(
+        '/{referral}/status',
+        [
+            LegalReferralController::class,
+            'updateStatus',
+        ]
+    )
+        ->whereNumber('referral')
+        ->middleware('legal.department');
 });
 
 });

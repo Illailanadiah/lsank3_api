@@ -1597,8 +1597,19 @@ private function canViewAllLicenses(mixed $user): bool
             'application_type' => $applicationType,
             'license_no' => $license->license_no,
             'file_no' => $license->file_no,
+
             'holder_name' =>
             $license->holder_name,
+
+            'company_name' =>
+            data_get($application, 'company_name')
+                ?? data_get($application, 'business_name')
+                ?? $license->holder_name
+                ?? '-',
+
+            'applicant_name' =>
+            data_get($application, 'applicant_name')
+                ?? '-',
 
             'holder_address' =>
             $holderAddress,

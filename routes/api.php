@@ -16,6 +16,9 @@ use App\Http\Controllers\Api\NoticeController;
 use App\Http\Controllers\Api\InspectionReportController;
 use App\Http\Controllers\Api\CivilCaseController;
 use App\Http\Controllers\Api\CriminalCaseController;
+use App\Http\Controllers\Api\UserNoticeController;
+use App\Http\Controllers\Api\StatementController;
+
 /*
 |--------------------------------------------------------------------------
 | Public Routes
@@ -655,6 +658,73 @@ Route::prefix('admin/legal/criminal-cases')->group(function () {
         ->whereNumber('case')
         ->name('admin.criminal-cases.destroy');
 });
+/*
+|--------------------------------------------------------------------------
+| Admin Side - Statements
+|--------------------------------------------------------------------------
+*/
 
+Route::prefix('admin/statements')->group(function () {
+
+    // Senarai penyata
+    Route::get('/', [
+        StatementController::class,
+        'index',
+    ])->name('admin.statements.index');
+
+    // Detail penyata berdasarkan application + tahun
+    Route::get('/{application}/{year}', [
+        StatementController::class,
+        'show',
+    ])
+        ->whereNumber('application')
+        ->whereNumber('year')
+        ->name('admin.statements.show');
+
+    // Download PDF penyata
+    Route::get('/{application}/{year}/download-pdf', [
+        StatementController::class,
+        'downloadPdf',
+    ])
+        ->whereNumber('application')
+        ->whereNumber('year')
+        ->name('admin.statements.download-pdf');
+
+    // Print PDF penyata
+    Route::get('/{application}/{year}/print-pdf', [
+        StatementController::class,
+        'printPdf',
+    ])
+        ->whereNumber('application')
+        ->whereNumber('year')
+        ->name('admin.statements.print-pdf');
+});
+
+Route::prefix('notices')->group(function () {
+    Route::get('/', [
+        UserNoticeController::class,
+        'index',
+    ]);
+
+    Route::get('/restriction/status', [
+        UserNoticeController::class,
+        'restrictionStatus',
+    ]);
+
+    Route::get('/{notice}', [
+        UserNoticeController::class,
+        'show',
+    ])->whereNumber('notice');
+
+    Route::post('/{notice}/respond', [
+        UserNoticeController::class,
+        'respond',
+    ])->whereNumber('notice');
+
+    Route::post('/{notice}/acknowledge', [
+        UserNoticeController::class,
+        'acknowledge',
+    ])->whereNumber('notice');
+});
 
 });

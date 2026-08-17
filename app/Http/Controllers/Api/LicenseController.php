@@ -15,6 +15,8 @@ use SimpleSoftwareIO\QrCode\Facades\QrCode;
 use Throwable;
 use App\Models\LsankLicenseTerminationRequest;
 use App\Models\LsankInvoice;
+use App\Services\NoticeRestrictionService;
+use App\Models\LsankNoticeRestriction;
 
 class LicenseController extends Controller
 {
@@ -1546,6 +1548,49 @@ private function canViewAllLicenses(mixed $user): bool
         return (int) $status->license_status_id;
     }
 
+   private function noticeRestrictionForLicense($license): array
+{
+    $applicationId = (int) (
+        $license->application_id ?? 0
+    );
+
+    if ($applicationId <= 0) {
+        return [
+            'active' => false,
+            'count' => 0,
+            'message' => null,
+            'notices' => [],
+        ];
+    }
+
+    $userId = (int) DB::table('lsank_applications')
+        ->where('application_id', $applicationId)
+        ->value('user_id');
+
+    if ($userId <= 0) {
+        return [
+            'active' => false,
+            'count' => 0,
+            'message' => null,
+            'notices' => [],
+        ];
+    }
+
+    $service = app(
+        NoticeRestrictionService::class
+    );
+
+    // Important for notices created before
+    // restriction module was introduced.
+    $service->syncExistingNoticesForUser(
+        $userId
+    );
+
+    return $service->summaryForUser(
+        $userId
+    );
+}
+
     private function formatLicense(
         LsankLicense $license
     ): array {
@@ -1787,6 +1832,10 @@ private function canViewAllLicenses(mixed $user): bool
             'verify_url' => url(
                 "/api/licenses/verify/{$license->qr_token}"
             ),
+            'notice_restriction' =>
+    $this->noticeRestrictionForLicense(
+        $license
+    ),
         ];
     }
 }

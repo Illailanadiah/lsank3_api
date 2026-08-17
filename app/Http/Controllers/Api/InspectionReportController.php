@@ -44,6 +44,14 @@ class InspectionReportController extends Controller
                 )
             ) {
                 $query->where('report_status', 'submitted');
+            } elseif (
+                in_array(
+                    $status,
+                    ['cancelled', 'dibatalkan', 'batal'],
+                    true
+                )
+            ) {
+                $query->where('report_status', 'cancelled');
             }
         }
 
@@ -169,6 +177,15 @@ class InspectionReportController extends Controller
         $report
     ) {
         $record = $this->findInspectionReport($report);
+
+        if ($record->report_status === 'cancelled') {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'Laporan yang telah dibatalkan adalah baca sahaja dan tidak boleh dikemas kini.',
+            ], 422);
+        }
+
         $validated = $this->validateRequest($request);
 
         $templateCode = strtoupper($validated['template_code']);
@@ -256,6 +273,7 @@ class InspectionReportController extends Controller
                 $this->formatReport($record->fresh()),
         ]);
     }
+
     public function destroy($report)
     {
         $record = $this->findInspectionReport($report);
@@ -733,12 +751,29 @@ class InspectionReportController extends Controller
 
             // Frontend-friendly label.
             'report_status' =>
-                $report->report_status === 'draft'
-                    ? 'Draf'
-                    : 'Direkodkan',
+                match ($report->report_status) {
+                    'draft' => 'Draf',
+                    'cancelled' => 'Dibatalkan',
+                    default => 'Direkodkan',
+                },
 
             'db_report_status' =>
                 $report->report_status,
+
+            'is_cancelled' =>
+                $report->report_status === 'cancelled',
+
+            'cancelled_at' =>
+                data_get(
+                    $data,
+                    'cancelled_at'
+                ),
+
+            'cancelled_by' =>
+                data_get(
+                    $data,
+                    'cancelled_by'
+                ),
 
             'prepared_by_name' =>
                 data_get(
@@ -773,4 +808,3 @@ class InspectionReportController extends Controller
         ];
     }
 }
-

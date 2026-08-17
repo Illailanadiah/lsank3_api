@@ -40,7 +40,7 @@ class RenewalController extends Controller
 
         $query = LsankLicense::query()
             ->with([
-                'application',
+                'application.applicant.company',
                 'status',
                 'renewals.application',
             ])
@@ -565,6 +565,40 @@ class RenewalController extends Controller
         LsankLicense $license
     ): array {
         $application = $license->application;
+        $applicantName = trim((string) (
+            $application?->applicant_name
+            ?: $application?->applicant?->applicant_name
+            ?: data_get(
+                $application?->draft_data,
+                'controllers.Nama Pemohon *'
+            )
+            ?: data_get(
+                $application?->submitted_data,
+                'controllers.Nama Pemohon *'
+            )
+            ?: ''
+        ));
+
+        $companyName = trim((string) (
+            $application?->company_name
+
+            ?: $application?->business_name
+            ?: $application?->applicant?->company?->company_name
+            ?: data_get(
+                $application?->draft_data,
+                'controllers.Nama Syarikat *'
+            )
+            ?: data_get(
+                $application?->draft_data,
+                'controllers.Nama Perniagaan *'
+            )
+            ?: data_get(
+                $application?->submitted_data,
+                'controllers.Nama Syarikat *'
+            )
+            ?: $license->holder_name
+            ?: ''
+        ));
 
         $isExpired = $license->is_expired;
         $activeRenewal = $license->renewals
@@ -597,6 +631,22 @@ class RenewalController extends Controller
 
             'holder_name' =>
             (string) ($license->holder_name ?? ''),
+
+            'company_name' =>
+            (string) (
+                $application?->company_name
+                ?: $application?->business_name
+                ?: $application?->applicant?->company?->company_name
+                ?: $license->holder_name
+                ?: ''
+            ),
+
+            'applicant_name' =>
+            (string) (
+                $application?->applicant_name
+                ?: $application?->applicant?->applicant_name
+                ?: ''
+            ),
 
             'license_type' =>
             (string) ($license->license_type ?? ''),

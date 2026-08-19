@@ -19,6 +19,10 @@ use App\Http\Controllers\Api\CriminalCaseController;
 use App\Http\Controllers\Api\UserNoticeController;
 use App\Http\Controllers\Api\StatementController;
 use App\Http\Controllers\Api\LegalReferralController;
+use App\Http\Controllers\Api\UserLegalCaseController;
+use App\Http\Controllers\Api\LegalCaseEmailController;
+
+
 
 
 /*
@@ -702,6 +706,31 @@ Route::prefix('admin/statements')->group(function () {
         ->name('admin.statements.print-pdf');
 });
 
+Route::get(
+    '/legal-cases',
+    [
+        UserLegalCaseController::class,
+        'index',
+    ]
+);
+
+Route::get(
+    '/legal-cases/{type}/{case}',
+    [
+        UserLegalCaseController::class,
+        'show',
+    ]
+)
+    ->whereIn(
+        'type',
+        [
+            'civil',
+            'criminal',
+        ]
+    )
+    ->whereNumber('case');
+
+
 Route::prefix('notices')->group(function () {
     Route::get('/', [
         UserNoticeController::class,
@@ -713,22 +742,38 @@ Route::prefix('notices')->group(function () {
         'restrictionStatus',
     ]);
 
+    // CIVIL + CRIMINAL FOR LICENSE HOLDER
+    // IMPORTANT: must be before /{notice}
+    Route::get('/legal-cases', [
+        UserLegalCaseController::class,
+        'index',
+    ]);
+
+    Route::get('/legal-cases/{type}/{case}', [
+        UserLegalCaseController::class,
+        'show',
+    ])
+        ->whereIn('type', [
+            'civil',
+            'criminal',
+        ])
+        ->whereNumber('case');
+
     Route::get('/{notice}', [
         UserNoticeController::class,
         'show',
-    ])->whereNumber('notice');
-
-    Route::post('/{notice}/respond', [
-        UserNoticeController::class,
-        'respond',
     ])->whereNumber('notice');
 
     Route::post('/{notice}/acknowledge', [
         UserNoticeController::class,
         'acknowledge',
     ])->whereNumber('notice');
-});
 
+    Route::post('/{notice}/respond', [
+        UserNoticeController::class,
+        'respond',
+    ])->whereNumber('notice');
+});
 
 Route::get(
     'legal-status/me',
@@ -772,4 +817,19 @@ Route::prefix(
         ->middleware('legal.department');
 });
 
+
+Route::post(
+    'admin/legal/cases/{type}/{case}/send-pengabstrakan-email',
+    [
+        LegalCaseEmailController::class,
+        'sendPengabstrakan',
+    ]
+)
+    ->whereIn('type', [
+        'civil',
+        'criminal',
+    ])
+    ->whereNumber('case')
+    ->middleware('legal.department');
+    
 });

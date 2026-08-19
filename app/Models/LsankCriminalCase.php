@@ -19,8 +19,14 @@ class LsankCriminalCase extends Model
 
     protected $fillable = [
         'case_no',
+        'legal_referral_id',
+        'notice_id',
+        'user_id',
         'license_id',
+        'application_id',
         'file_no',
+        'license_no',
+        'efiling_case_no',
         'offence',
         'party_name',
         'section_regulation',

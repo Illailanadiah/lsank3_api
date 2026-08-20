@@ -21,6 +21,7 @@ use App\Http\Controllers\Api\StatementController;
 use App\Http\Controllers\Api\LegalReferralController;
 use App\Http\Controllers\Api\UserLegalCaseController;
 use App\Http\Controllers\Api\LegalCaseEmailController;
+use App\Http\Controllers\Api\NotificationController;
 
 
 
@@ -831,5 +832,77 @@ Route::post(
     ])
     ->whereNumber('case')
     ->middleware('legal.department');
-    
+
+/*
+|--------------------------------------------------------------------------
+| Notifications
+|--------------------------------------------------------------------------
+*/
+
+Route::prefix('notifications')->group(function () {
+
+    Route::get('/', [
+        NotificationController::class,
+        'index',
+    ]);
+
+    Route::get('/unread', [
+        NotificationController::class,
+        'unread',
+    ]);
+
+    Route::get('/action-required', [
+        NotificationController::class,
+        'actionRequired',
+    ]);
+
+    Route::get('/ribbon', [
+        NotificationController::class,
+        'ribbon',
+    ]);
+
+    Route::post('/read-all', [
+        NotificationController::class,
+        'markAllRead',
+    ]);
+
+    Route::post(
+        '/{notification}/shown',
+        [
+            NotificationController::class,
+            'markShown',
+        ]
+    )->whereNumber('notification');
+
+    Route::post(
+        '/{notification}/read',
+        [
+            NotificationController::class,
+            'markRead',
+        ]
+    )->whereNumber('notification');
+
+    Route::post(
+        '/{notification}/dismiss',
+        [
+            NotificationController::class,
+            'dismiss',
+        ]
+    )->whereNumber('notification');
+
+    Route::post(
+        '/{notification}/complete',
+        [
+            NotificationController::class,
+            'complete',
+        ]
+    )->whereNumber('notification');
+});
+
+/*
+|--------------------------------------------------------------------------
+| End Protected Routes
+|--------------------------------------------------------------------------
+*/
+
 });

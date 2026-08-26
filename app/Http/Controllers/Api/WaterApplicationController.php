@@ -13,9 +13,11 @@ use App\Models\LsankPayment;
 use App\Models\LsankReceipt;
 use App\Models\LsankWaterBodyApplication;
 use App\Services\LicenseService;
+use App\Services\Notifications\NotificationManager;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use App\Models\LsankAmendmentApplication;
 
 class WaterApplicationController extends Controller
@@ -219,7 +221,7 @@ class WaterApplicationController extends Controller
             ], 422);
         }
 
-        return DB::transaction(function () use ($application, $invoice) {
+        return DB::transaction(function () use ($application, $invoice, $request) {
             $lockedApplication = LsankApplication::query()
                 ->where('application_id', $application->application_id)
                 ->lockForUpdate()
@@ -263,7 +265,8 @@ class WaterApplicationController extends Controller
                 return $this->payAmendmentProcessingInvoice(
                     $lockedApplication,
                     $lockedInvoice,
-                    $selectedActivities
+                    $selectedActivities,
+                    (int) $request->user()->getKey()
                 );
             }
 
@@ -327,6 +330,17 @@ class WaterApplicationController extends Controller
             );
 
             $receipt = $this->createReceipt($lockedInvoice, $payment, '01');
+
+            /*
+             * Notification event:
+             * A Water application is considered officially submitted
+             * only after the processing fee has been paid and the
+             * application status becomes "Dalam Proses".
+             */
+            $this->scheduleApplicationSubmittedNotification(
+                $paidApplication,
+                (int) $request->user()->getKey()
+            );
 
             $remainingCount = LsankInvoice::query()
                 ->where('application_id', $lockedApplication->application_id)
@@ -2098,7 +2112,8 @@ class WaterApplicationController extends Controller
     private function payAmendmentProcessingInvoice(
         LsankApplication $application,
         LsankInvoice $invoice,
-        Collection $selectedActivities
+        Collection $selectedActivities,
+        int $actorUserId
     ) {
         $statusId = $this->applicationStatusId(
             'in_process',
@@ -2218,6 +2233,16 @@ class WaterApplicationController extends Controller
             $invoice,
             $payment,
             '01'
+        );
+
+        /*
+         * The amendment has now paid its processing fee and moved
+         * into "Dalam Proses", so notify the holder and connected
+         * Water department roles.
+         */
+        $this->scheduleApplicationSubmittedNotification(
+            $application,
+            $actorUserId
         );
 
         $amendment =
@@ -2998,6 +3023,112 @@ class WaterApplicationController extends Controller
         $parts = explode('-', $latest->receipt_no);
         $running = count($parts) >= 3 ? (int) $parts[2] : 0;
         return $running > 0 ? $running + 1 : 1;
+    }
+
+    /**
+     * Queue the Water application.submitted notification only after the
+     * surrounding database transaction has committed successfully.
+     *
+     * Notification failures are logged and MUST NOT roll back a successful
+     * application/payment transaction.
+     */
+    private function scheduleApplicationSubmittedNotification(
+        LsankApplication $application,
+        int $actorUserId
+    ): void {
+        $applicationId = (int) $application->application_id;
+
+        DB::afterCommit(function () use (
+            $applicationId,
+            $actorUserId
+        ): void {
+            try {
+                $freshApplication = LsankApplication::query()
+                    ->with([
+                        'applicant.company',
+                        'waterBody',
+                    ])
+                    ->where(
+                        'application_id',
+                        $applicationId
+                    )
+                    ->first();
+
+                if (!$freshApplication) {
+                    Log::warning(
+                        'Water application notification skipped: application not found.',
+                        [
+                            'application_id' => $applicationId,
+                            'event_type' => 'application.submitted',
+                        ]
+                    );
+
+                    return;
+                }
+
+                app(NotificationManager::class)->dispatch(
+                    'application.submitted',
+                    [
+                        'source_type' => 'application',
+                        'source_id' =>
+                            (int) $freshApplication->application_id,
+
+                        'application' => $freshApplication,
+
+                        'application_type' => 'water',
+
+                        'application_no' =>
+                            $freshApplication->application_ref_no
+                            ?? (
+                                'APP-'
+                                . $freshApplication->application_id
+                            ),
+
+                        'user_id' =>
+                            (int) $freshApplication->user_id,
+
+                        'applicant_name' =>
+                            $freshApplication->applicant_name
+                            ?? $freshApplication->applicant?->applicant_name
+                            ?? $freshApplication->company_name
+                            ?? $freshApplication->business_name
+                            ?? '',
+
+                        'actor_user_id' => $actorUserId,
+
+                        'action_url' => '/applications/type',
+
+                        'metadata' => [
+                            'module' => 'water',
+                            'application_status' =>
+                                $freshApplication->application_status,
+                            'payment_status' =>
+                                $freshApplication->payment_status,
+                            'application_type_id' =>
+                                $freshApplication->application_type_id,
+                            'applicant_id' =>
+                                $freshApplication->applicant_id,
+                            'activity_name' =>
+                                $freshApplication->activity_name,
+                            'district' =>
+                                $freshApplication->district,
+                        ],
+                    ]
+                );
+            } catch (\Throwable $exception) {
+                Log::error(
+                    'Failed to dispatch Water application.submitted notification.',
+                    [
+                        'application_id' => $applicationId,
+                        'actor_user_id' => $actorUserId,
+                        'event_type' => 'application.submitted',
+                        'error' => $exception->getMessage(),
+                    ]
+                );
+
+                report($exception);
+            }
+        });
     }
 
     private function generateDraftReferenceNo(int $userId): string

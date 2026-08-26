@@ -24,6 +24,7 @@ use App\Http\Controllers\Api\LegalCaseEmailController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\NotificationPreferenceController;
 use App\Http\Controllers\Api\UserDeviceController;
+use App\Http\Controllers\Api\WaterApplicationDocumentController;
 
 
 
@@ -80,6 +81,28 @@ Route::get('/licenses/verify/{token}', [
 */
 
 Route::middleware('auth:sanctum')->group(function () {
+
+    /*
+    |--------------------------------------------------------------------------
+    | Document / File Uploads
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get(
+        '/applications/water/{application}/documents',
+        [WaterApplicationDocumentController::class, 'index']
+    );
+
+    Route::post(
+        '/applications/water/{application}/documents',
+        [WaterApplicationDocumentController::class, 'store']
+    );
+
+    Route::delete(
+        '/applications/water/{application}/documents/{document}',
+        [WaterApplicationDocumentController::class, 'destroy']
+    );
+
     /*
     |--------------------------------------------------------------------------
     | Auth / Profile

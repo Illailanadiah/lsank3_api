@@ -13,10 +13,12 @@ use App\Models\LsankServiceType;
 use App\Models\LsankRenewalApplication;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use App\Models\LsankInvoice;
 use App\Models\LsankPayment;
 use App\Models\LsankReceipt;
 use App\Services\LicenseService;
+use App\Services\Notifications\NotificationManager;
 use App\Models\LsankLicense;
 
 class EffluentApplicationController extends Controller
@@ -1382,7 +1384,8 @@ class EffluentApplicationController extends Controller
 
         return DB::transaction(function () use (
             $application,
-            $invoice
+            $invoice,
+            $request
         ) {
             /*
          * Lock application dan invoice.
@@ -1591,6 +1594,17 @@ class EffluentApplicationController extends Controller
 
                     'status' => 'valid',
                 ]
+            );
+
+            /*
+             * Notification event:
+             * An Effluent application is officially submitted for review
+             * after the processing fee is paid and its status becomes
+             * "Dalam Proses".
+             */
+            $this->scheduleApplicationSubmittedNotification(
+                $lockedApplication,
+                (int) $request->user()->getKey()
             );
 
             return response()->json([
@@ -2825,6 +2839,120 @@ class EffluentApplicationController extends Controller
             'security_refund_status' =>
             'not_requested',
         ]);
+    }
+
+    /**
+     * Queue the Effluent application.submitted notification only after the
+     * payment/application database transaction has committed.
+     *
+     * The core application flow must remain successful even when a
+     * notification provider is temporarily unavailable.
+     */
+    private function scheduleApplicationSubmittedNotification(
+        LsankApplication $application,
+        int $actorUserId
+    ): void {
+        $applicationId = (int) $application->application_id;
+
+        DB::afterCommit(function () use (
+            $applicationId,
+            $actorUserId
+        ): void {
+            try {
+                $freshApplication = LsankApplication::query()
+                    ->with([
+                        'applicant.company',
+                        'effluent.serviceType',
+                    ])
+                    ->where(
+                        'application_id',
+                        $applicationId
+                    )
+                    ->first();
+
+                if (!$freshApplication) {
+                    Log::warning(
+                        'Effluent application notification skipped: application not found.',
+                        [
+                            'application_id' => $applicationId,
+                            'event_type' => 'application.submitted',
+                        ]
+                    );
+
+                    return;
+                }
+
+                $serviceName =
+                    $freshApplication
+                        ->effluent
+                        ?->serviceType
+                        ?->service_name
+                    ?? $freshApplication->activity_name
+                    ?? $freshApplication->activity_details
+                    ?? '';
+
+                app(NotificationManager::class)->dispatch(
+                    'application.submitted',
+                    [
+                        'source_type' => 'application',
+                        'source_id' =>
+                            (int) $freshApplication->application_id,
+
+                        'application' => $freshApplication,
+
+                        'application_type' => 'effluent',
+
+                        'application_no' =>
+                            $freshApplication->application_ref_no
+                            ?? (
+                                'APP-'
+                                . $freshApplication->application_id
+                            ),
+
+                        'user_id' =>
+                            (int) $freshApplication->user_id,
+
+                        'applicant_name' =>
+                            $freshApplication->applicant_name
+                            ?? $freshApplication->applicant?->applicant_name
+                            ?? $freshApplication->company_name
+                            ?? $freshApplication->business_name
+                            ?? '',
+
+                        'actor_user_id' => $actorUserId,
+
+                        'action_url' => '/applications/type',
+
+                        'metadata' => [
+                            'module' => 'effluent',
+                            'application_status' =>
+                                $freshApplication->application_status,
+                            'payment_status' =>
+                                $freshApplication->payment_status,
+                            'application_type_id' =>
+                                $freshApplication->application_type_id,
+                            'applicant_id' =>
+                                $freshApplication->applicant_id,
+                            'service_name' => $serviceName,
+                            'district' =>
+                                $freshApplication->district,
+                        ],
+                    ]
+                );
+            } catch (\Throwable $exception) {
+                Log::error(
+                    'Failed to dispatch Effluent application.submitted notification.',
+                    [
+                        'application_id' => $applicationId,
+                        'actor_user_id' => $actorUserId,
+                        'event_type' => 'application.submitted',
+                        'error' => $exception->getMessage(),
+                    ]
+                );
+
+                report($exception);
+            }
+        });
     }
 
     private function generateDraftReferenceNo(int $userId): string

@@ -22,6 +22,8 @@ use App\Http\Controllers\Api\LegalReferralController;
 use App\Http\Controllers\Api\UserLegalCaseController;
 use App\Http\Controllers\Api\LegalCaseEmailController;
 use App\Http\Controllers\Api\NotificationController;
+use App\Http\Controllers\Api\NotificationPreferenceController;
+use App\Http\Controllers\Api\UserDeviceController;
 use App\Http\Controllers\Api\WaterApplicationDocumentController;
 
 
@@ -114,11 +116,6 @@ Route::middleware('auth:sanctum')->group(function () {
         AuthController::class,
         'updateAdminProfile',
     ]);
-    Route::get('/admin/licenses', [
-        LicenseController::class,
-        'adminIndex'
-    ]);
-
     /*
     |--------------------------------------------------------------------------
     | Google Maps
@@ -859,67 +856,124 @@ Route::post(
 |--------------------------------------------------------------------------
 | Notifications
 |--------------------------------------------------------------------------
+|
+| In-app notification endpoints used by Notification Bell and Ribbon.
+|
 */
 
 Route::prefix('notifications')->group(function () {
-
     Route::get('/', [
         NotificationController::class,
         'index',
-    ]);
+    ])->name('notifications.index');
 
     Route::get('/unread', [
         NotificationController::class,
         'unread',
-    ]);
+    ])->name('notifications.unread');
 
     Route::get('/action-required', [
         NotificationController::class,
         'actionRequired',
-    ]);
+    ])->name('notifications.action-required');
 
     Route::get('/ribbon', [
         NotificationController::class,
         'ribbon',
-    ]);
+    ])->name('notifications.ribbon');
 
     Route::post('/read-all', [
         NotificationController::class,
         'markAllRead',
-    ]);
+    ])->name('notifications.read-all');
 
-    Route::post(
-        '/{notification}/shown',
-        [
-            NotificationController::class,
-            'markShown',
-        ]
-    )->whereNumber('notification');
+    Route::post('/{notification}/shown', [
+        NotificationController::class,
+        'markShown',
+    ])
+        ->whereNumber('notification')
+        ->name('notifications.shown');
 
-    Route::post(
-        '/{notification}/read',
-        [
-            NotificationController::class,
-            'markRead',
-        ]
-    )->whereNumber('notification');
+    Route::post('/{notification}/read', [
+        NotificationController::class,
+        'markRead',
+    ])
+        ->whereNumber('notification')
+        ->name('notifications.read');
 
-    Route::post(
-        '/{notification}/dismiss',
-        [
-            NotificationController::class,
-            'dismiss',
-        ]
-    )->whereNumber('notification');
+    Route::post('/{notification}/dismiss', [
+        NotificationController::class,
+        'dismiss',
+    ])
+        ->whereNumber('notification')
+        ->name('notifications.dismiss');
 
-    Route::post(
-        '/{notification}/complete',
-        [
-            NotificationController::class,
-            'complete',
-        ]
-    )->whereNumber('notification');
+    Route::post('/{notification}/complete', [
+        NotificationController::class,
+        'complete',
+    ])
+        ->whereNumber('notification')
+        ->name('notifications.complete');
 });
+
+/*
+|--------------------------------------------------------------------------
+| Notification Preferences
+|--------------------------------------------------------------------------
+*/
+
+Route::get('/notification-preferences', [
+    NotificationPreferenceController::class,
+    'show',
+])->name('notification-preferences.show');
+
+Route::patch('/notification-preferences', [
+    NotificationPreferenceController::class,
+    'update',
+])->name('notification-preferences.update');
+
+Route::post('/notification-preferences/reset', [
+    NotificationPreferenceController::class,
+    'reset',
+])->name('notification-preferences.reset');
+
+/*
+|--------------------------------------------------------------------------
+| Push Notification Devices
+|--------------------------------------------------------------------------
+*/
+
+Route::get('/devices', [
+    UserDeviceController::class,
+    'index',
+])->name('devices.index');
+
+Route::post('/devices/register', [
+    UserDeviceController::class,
+    'register',
+])->name('devices.register');
+
+Route::post('/devices/touch', [
+    UserDeviceController::class,
+    'touch',
+])->name('devices.touch');
+
+Route::post('/devices/unregister', [
+    UserDeviceController::class,
+    'unregister',
+])->name('devices.unregister');
+
+Route::post('/devices/unregister-all', [
+    UserDeviceController::class,
+    'unregisterAll',
+])->name('devices.unregister-all');
+
+Route::delete('/devices/{device}', [
+    UserDeviceController::class,
+    'destroy',
+])
+    ->whereNumber('device')
+    ->name('devices.destroy');
 
 /*
 |--------------------------------------------------------------------------

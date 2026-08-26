@@ -139,7 +139,7 @@ class NotificationController extends Controller
                 )
                 : null,
         'unread_count' =>
-            $this->unreadCount($userId),
+            $this->unreadCount($userId),    
         'action_required_count' =>
             $this->actionRequiredCount(
                 $userId

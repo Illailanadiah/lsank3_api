@@ -66,4 +66,25 @@ return [
         'minimum_score' => (float) env('RECAPTCHA_MIN_SCORE', 0.5),
     ],
 
+    'firebase' => [
+    'project_id' =>
+        env('FIREBASE_PROJECT_ID'),
+
+    'credentials' =>
+        env('FIREBASE_CREDENTIALS'),
+],
+
+'whatsapp' => [
+    'access_token' =>
+        env('WHATSAPP_ACCESS_TOKEN'),
+
+    'phone_number_id' =>
+        env('WHATSAPP_PHONE_NUMBER_ID'),
+
+    'graph_version' =>
+        env('WHATSAPP_GRAPH_VERSION'),
+],
+
+
+
 ];

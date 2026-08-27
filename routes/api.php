@@ -25,7 +25,7 @@ use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\NotificationPreferenceController;
 use App\Http\Controllers\Api\UserDeviceController;
 use App\Http\Controllers\Api\WaterApplicationDocumentController;
-
+use App\Http\Controllers\Api\EffluentApplicationDocumentController;
 
 
 /*
@@ -106,6 +106,26 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get(
         '/applications/water/{application}/documents/{document}/download',
         [WaterApplicationDocumentController::class, 'download']
+    );
+
+    Route::get(
+        '/applications/effluent/{application}/documents',
+        [EffluentApplicationDocumentController::class, 'index']
+    );
+
+    Route::post(
+        '/applications/effluent/{application}/documents',
+        [EffluentApplicationDocumentController::class, 'store']
+    );
+
+    Route::get(
+        '/applications/effluent/{application}/documents/{document}/download',
+        [EffluentApplicationDocumentController::class, 'download']
+    );
+
+    Route::delete(
+        '/applications/effluent/{application}/documents/{document}',
+        [EffluentApplicationDocumentController::class, 'destroy']
     );
 
     /*

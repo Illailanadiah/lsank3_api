@@ -28,7 +28,11 @@ class WaterApplicationDocumentController extends Controller
 
         $documents = DB::table('lsank_application_documents')
             ->where('application_id', $waterApplication->application_id)
-            ->where('status', '!=', 'deleted')
+            ->whereIn('status', [
+                'uploaded',
+                'verified',
+                'rejected',
+            ])
             ->orderByDesc('document_id')
             ->get()
             ->map(function ($document) {
@@ -119,20 +123,13 @@ class WaterApplicationDocumentController extends Controller
                 'application_id' =>
                 $waterApplication->application_id,
 
-                /*
-                 * Belum ada mapping document_type_id,
-                 * jadi biarkan null buat masa ini.
-                 */
                 'document_type_id' => null,
 
-                /*
-                 * file_name simpan nama asal supaya user
-                 * nampak nama fail yang dia pilih.
-                 */
                 'file_name' =>
                 $file->getClientOriginalName(),
 
-                'file_path' => $path,
+                'file_path' =>
+                $path,
 
                 'file_type' =>
                 $file->getMimeType(),
@@ -147,14 +144,8 @@ class WaterApplicationDocumentController extends Controller
                 now(),
 
                 'status' =>
-                'active',
+                'uploaded',
 
-                /*
-                 * remarks digunakan sebagai document_key.
-                 * Contoh:
-                 * borang_c_ic
-                 * borang_c_surat
-                 */
                 'remarks' =>
                 $documentKey,
 
@@ -209,7 +200,7 @@ class WaterApplicationDocumentController extends Controller
                 now()->toDateTimeString(),
 
                 'status' =>
-                'active',
+                'uploaded',
 
                 'url' =>
                 asset(

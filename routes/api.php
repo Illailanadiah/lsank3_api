@@ -103,6 +103,11 @@ Route::middleware('auth:sanctum')->group(function () {
         [WaterApplicationDocumentController::class, 'destroy']
     );
 
+    Route::get(
+        '/applications/water/{application}/documents/{document}/download',
+        [WaterApplicationDocumentController::class, 'download']
+    );
+
     /*
     |--------------------------------------------------------------------------
     | Auth / Profile

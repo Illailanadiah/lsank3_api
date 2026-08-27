@@ -8,18 +8,18 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
-class WaterApplicationDocumentController extends Controller
+class EffluentApplicationDocumentController extends Controller
 {
-    public function index(Request $request, int|string $application)
+    public function index(Request $request, $application)
     {
         $user = $request->user();
 
-        $waterApplication = LsankApplication::query()
+        $effluentApplication = LsankApplication::query()
             ->where('application_id', $application)
             ->where('user_id', $user->user_id)
             ->first();
 
-        if (!$waterApplication) {
+        if (!$effluentApplication) {
             return response()->json([
                 'success' => false,
                 'message' => 'Permohonan tidak dijumpai.',
@@ -27,7 +27,7 @@ class WaterApplicationDocumentController extends Controller
         }
 
         $documents = DB::table('lsank_application_documents')
-            ->where('application_id', $waterApplication->application_id)
+            ->where('application_id', $effluentApplication->application_id)
             ->whereIn('status', [
                 'uploaded',
                 'verified',
@@ -40,13 +40,12 @@ class WaterApplicationDocumentController extends Controller
                     'id' => $document->document_id,
                     'document_id' => $document->document_id,
 
-                    // documentKey Flutter disimpan dalam remarks
                     'document_key' => $document->remarks,
 
                     'name' => $document->file_name,
                     'original_name' => $document->file_name,
-
                     'file_name' => $document->file_name,
+
                     'file_path' => $document->file_path,
                     'path' => $document->file_path,
 
@@ -77,16 +76,16 @@ class WaterApplicationDocumentController extends Controller
         ]);
     }
 
-    public function store(Request $request, int|string $application)
+    public function store(Request $request, $application)
     {
         $user = $request->user();
 
-        $waterApplication = LsankApplication::query()
+        $effluentApplication = LsankApplication::query()
             ->where('application_id', $application)
             ->where('user_id', $user->user_id)
             ->first();
 
-        if (!$waterApplication) {
+        if (!$effluentApplication) {
             return response()->json([
                 'success' => false,
                 'message' => 'Permohonan tidak dijumpai.',
@@ -95,9 +94,7 @@ class WaterApplicationDocumentController extends Controller
 
         $request->validate([
             'document_key' => ['required', 'string', 'max:100'],
-
             'files' => ['required'],
-
             'files.*' => [
                 'file',
                 'mimes:pdf,jpg,jpeg,png',
@@ -113,7 +110,7 @@ class WaterApplicationDocumentController extends Controller
 
         foreach ($request->file('files', []) as $file) {
             $path = $file->store(
-                "applications/water/{$waterApplication->application_id}/documents",
+                "applications/effluent/{$effluentApplication->application_id}/documents",
                 'public'
             );
 
@@ -121,15 +118,14 @@ class WaterApplicationDocumentController extends Controller
                 'lsank_application_documents'
             )->insertGetId([
                 'application_id' =>
-                $waterApplication->application_id,
+                $effluentApplication->application_id,
 
                 'document_type_id' => null,
 
                 'file_name' =>
                 $file->getClientOriginalName(),
 
-                'file_path' =>
-                $path,
+                'file_path' => $path,
 
                 'file_type' =>
                 $file->getMimeType(),
@@ -157,14 +153,10 @@ class WaterApplicationDocumentController extends Controller
             ], 'document_id');
 
             $uploadedDocuments[] = [
-                'id' =>
-                $documentId,
+                'id' => $documentId,
+                'document_id' => $documentId,
 
-                'document_id' =>
-                $documentId,
-
-                'document_key' =>
-                $documentKey,
+                'document_key' => $documentKey,
 
                 'name' =>
                 $file->getClientOriginalName(),
@@ -175,11 +167,8 @@ class WaterApplicationDocumentController extends Controller
                 'file_name' =>
                 $file->getClientOriginalName(),
 
-                'file_path' =>
-                $path,
-
-                'path' =>
-                $path,
+                'file_path' => $path,
+                'path' => $path,
 
                 'file_type' =>
                 $file->getMimeType(),
@@ -202,48 +191,46 @@ class WaterApplicationDocumentController extends Controller
                 'status' =>
                 'uploaded',
 
-                'url' =>
-                asset(
+                'url' => asset(
                     'storage/' . ltrim($path, '/')
                 ),
             ];
         }
 
-        /*
-         * Simpan key dokumen ke draft_data supaya bila user
-         * keluar dan masuk semula, langkah upload masih dianggap siap.
-         */
-        $draftData = is_array($waterApplication->draft_data)
-            ? $waterApplication->draft_data
+        $draftData = is_array($effluentApplication->draft_data)
+            ? $effluentApplication->draft_data
             : [];
 
-        $uploadedKeys = $draftData['uploaded_documents'] ?? [];
+        $uploadedKeys =
+            $draftData['uploaded_documents'] ?? [];
 
         if (!is_array($uploadedKeys)) {
             $uploadedKeys = [];
         }
 
-        if (!in_array($documentKey, $uploadedKeys, true)) {
+        if (!in_array(
+            $documentKey,
+            $uploadedKeys,
+            true
+        )) {
             $uploadedKeys[] = $documentKey;
         }
 
-        $draftData['uploaded_documents'] = array_values(
-            array_unique($uploadedKeys)
-        );
+        $draftData['uploaded_documents'] =
+            array_values(
+                array_unique($uploadedKeys)
+            );
 
-        $waterApplication->draft_data = $draftData;
-        $waterApplication->save();
+        $effluentApplication->draft_data =
+            $draftData;
+
+        $effluentApplication->save();
 
         return response()->json([
             'success' => true,
-            'message' => 'Dokumen berjaya dimuat naik.',
+            'message' =>
+            'Dokumen berjaya dimuat naik.',
 
-            /*
-             * Flutter awak sekarang ada kemungkinan baca
-             * result['document'] atau result['data'].
-             *
-             * Jadi kita pulangkan kedua-duanya.
-             */
             'document' =>
             count($uploadedDocuments) === 1
                 ? $uploadedDocuments[0]
@@ -261,17 +248,17 @@ class WaterApplicationDocumentController extends Controller
 
     public function download(
         Request $request,
-        int|string $application,
-        int|string $document
+        $application,
+        $document
     ) {
         $user = $request->user();
 
-        $waterApplication = LsankApplication::query()
+        $effluentApplication = LsankApplication::query()
             ->where('application_id', $application)
             ->where('user_id', $user->user_id)
             ->first();
 
-        if (!$waterApplication) {
+        if (!$effluentApplication) {
             return response()->json([
                 'success' => false,
                 'message' => 'Permohonan tidak dijumpai.',
@@ -287,7 +274,7 @@ class WaterApplicationDocumentController extends Controller
             )
             ->where(
                 'application_id',
-                $waterApplication->application_id
+                $effluentApplication->application_id
             )
             ->first();
 
@@ -311,26 +298,24 @@ class WaterApplicationDocumentController extends Controller
         }
 
         return response()->download(
-            storage_path(
-                'app/public/' . ltrim($documentRecord->file_path, '/')
-            ),
+            Storage::disk('public')->path($documentRecord->file_path),
             $documentRecord->file_name
         );
     }
 
     public function destroy(
         Request $request,
-        int|string $application,
-        int|string $document
+        $application,
+        $document
     ) {
         $user = $request->user();
 
-        $waterApplication = LsankApplication::query()
+        $effluentApplication = LsankApplication::query()
             ->where('application_id', $application)
             ->where('user_id', $user->user_id)
             ->first();
 
-        if (!$waterApplication) {
+        if (!$effluentApplication) {
             return response()->json([
                 'success' => false,
                 'message' => 'Permohonan tidak dijumpai.',
@@ -346,7 +331,7 @@ class WaterApplicationDocumentController extends Controller
             )
             ->where(
                 'application_id',
-                $waterApplication->application_id
+                $effluentApplication->application_id
             )
             ->first();
 
@@ -375,10 +360,6 @@ class WaterApplicationDocumentController extends Controller
             )
             ->delete();
 
-        /*
-         * Kalau ini fail terakhir bagi document key tersebut,
-         * buang key daripada draft_data.
-         */
         $documentKey = trim(
             (string) ($documentRecord->remarks ?? '')
         );
@@ -389,7 +370,7 @@ class WaterApplicationDocumentController extends Controller
             )
                 ->where(
                     'application_id',
-                    $waterApplication->application_id
+                    $effluentApplication->application_id
                 )
                 ->where(
                     'remarks',
@@ -399,9 +380,9 @@ class WaterApplicationDocumentController extends Controller
 
             if ($remainingCount === 0) {
                 $draftData = is_array(
-                    $waterApplication->draft_data
+                    $effluentApplication->draft_data
                 )
-                    ? $waterApplication->draft_data
+                    ? $effluentApplication->draft_data
                     : [];
 
                 $uploadedKeys =
@@ -414,21 +395,23 @@ class WaterApplicationDocumentController extends Controller
                             array_filter(
                                 $uploadedKeys,
                                 fn($item) =>
-                                (string) $item !== $documentKey
+                                (string) $item !==
+                                    $documentKey
                             )
                         );
 
-                    $waterApplication->draft_data =
+                    $effluentApplication->draft_data =
                         $draftData;
 
-                    $waterApplication->save();
+                    $effluentApplication->save();
                 }
             }
         }
 
         return response()->json([
             'success' => true,
-            'message' => 'Dokumen berjaya dipadam.',
+            'message' =>
+            'Dokumen berjaya dipadam.',
         ]);
     }
 }

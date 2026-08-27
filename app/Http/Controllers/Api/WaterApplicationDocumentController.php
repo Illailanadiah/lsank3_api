@@ -14,13 +14,6 @@ class WaterApplicationDocumentController extends Controller
     {
         $user = $request->user();
 
-        if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Pengguna tidak sah.',
-            ], 401);
-        }
-
         $waterApplication = LsankApplication::query()
             ->where('application_id', $application)
             ->where('user_id', $user->user_id)
@@ -34,23 +27,40 @@ class WaterApplicationDocumentController extends Controller
         }
 
         $documents = DB::table('lsank_application_documents')
-            ->where('application_id', $application)
-            ->orderByDesc('id')
+            ->where('application_id', $waterApplication->application_id)
+            ->where('status', '!=', 'deleted')
+            ->orderByDesc('document_id')
             ->get()
             ->map(function ($document) {
                 return [
-                    'id' => $document->id,
-                    'document_id' => $document->id,
-                    'document_key' => $document->document_key,
-                    'name' => $document->original_name,
-                    'original_name' => $document->original_name,
+                    'id' => $document->document_id,
+                    'document_id' => $document->document_id,
+
+                    // documentKey Flutter disimpan dalam remarks
+                    'document_key' => $document->remarks,
+
+                    'name' => $document->file_name,
+                    'original_name' => $document->file_name,
+
                     'file_name' => $document->file_name,
                     'file_path' => $document->file_path,
                     'path' => $document->file_path,
-                    'mime_type' => $document->mime_type,
-                    'file_size' => $document->file_size,
-                    'size' => $document->file_size,
-                'url' => asset('storage/' . $document->file_path),
+
+                    'file_type' => $document->file_type,
+                    'mime_type' => $document->file_type,
+
+                    'file_size' => (int) $document->file_size,
+                    'size' => (int) $document->file_size,
+
+                    'uploaded_by' => $document->uploaded_by,
+                    'uploaded_at' => $document->uploaded_at,
+
+                    'status' => $document->status,
+
+                    'url' => asset(
+                        'storage/' . ltrim($document->file_path, '/')
+                    ),
+
                     'created_at' => $document->created_at,
                     'updated_at' => $document->updated_at,
                 ];
@@ -60,20 +70,12 @@ class WaterApplicationDocumentController extends Controller
         return response()->json([
             'success' => true,
             'data' => $documents,
-            'documents' => $documents,
         ]);
     }
 
     public function store(Request $request, $application)
     {
         $user = $request->user();
-
-        if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Pengguna tidak sah.',
-            ], 401);
-        }
 
         $waterApplication = LsankApplication::query()
             ->where('application_id', $application)
@@ -88,18 +90,11 @@ class WaterApplicationDocumentController extends Controller
         }
 
         $request->validate([
-            'document_key' => [
-                'required',
-                'string',
-                'max:100',
-            ],
-            'files' => [
-                'required',
-                'array',
-                'min:1',
-            ],
+            'document_key' => ['required', 'string', 'max:100'],
+
+            'files' => ['required'],
+
             'files.*' => [
-                'required',
                 'file',
                 'mimes:pdf,jpg,jpeg,png',
                 'max:5120',
@@ -114,74 +109,136 @@ class WaterApplicationDocumentController extends Controller
 
         foreach ($request->file('files', []) as $file) {
             $path = $file->store(
-                "applications/water/{$application}/documents",
+                "applications/water/{$waterApplication->application_id}/documents",
                 'public'
             );
 
-            $documentId = DB::table('lsank_application_documents')->insertGetId([
-                'application_id' => $waterApplication->application_id,
-                'document_key' => $documentKey,
-                'original_name' => $file->getClientOriginalName(),
-                'file_name' => basename($path),
+            $documentId = DB::table(
+                'lsank_application_documents'
+            )->insertGetId([
+                'application_id' =>
+                $waterApplication->application_id,
+
+                /*
+                 * Belum ada mapping document_type_id,
+                 * jadi biarkan null buat masa ini.
+                 */
+                'document_type_id' => null,
+
+                /*
+                 * file_name simpan nama asal supaya user
+                 * nampak nama fail yang dia pilih.
+                 */
+                'file_name' =>
+                $file->getClientOriginalName(),
+
                 'file_path' => $path,
-                'mime_type' => $file->getMimeType(),
-                'file_size' => $file->getSize(),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
+
+                'file_type' =>
+                $file->getMimeType(),
+
+                'file_size' =>
+                $file->getSize(),
+
+                'uploaded_by' =>
+                $user->user_id,
+
+                'uploaded_at' =>
+                now(),
+
+                'status' =>
+                'active',
+
+                /*
+                 * remarks digunakan sebagai document_key.
+                 * Contoh:
+                 * borang_c_ic
+                 * borang_c_surat
+                 */
+                'remarks' =>
+                $documentKey,
+
+                'created_at' =>
+                now(),
+
+                'updated_at' =>
+                now(),
+            ], 'document_id');
 
             $uploadedDocuments[] = [
-                'id' => $documentId,
-                'document_id' => $documentId,
-                'document_key' => $documentKey,
+                'id' =>
+                $documentId,
 
-                'name' => $file->getClientOriginalName(),
-                'original_name' => $file->getClientOriginalName(),
+                'document_id' =>
+                $documentId,
 
-                'file_name' => basename($path),
+                'document_key' =>
+                $documentKey,
 
-                'file_path' => $path,
-                'path' => $path,
+                'name' =>
+                $file->getClientOriginalName(),
 
-                'mime_type' => $file->getMimeType(),
+                'original_name' =>
+                $file->getClientOriginalName(),
 
-                'file_size' => $file->getSize(),
-                'size' => $file->getSize(),
+                'file_name' =>
+                $file->getClientOriginalName(),
 
-                'url' => asset('storage/' . $path),
+                'file_path' =>
+                $path,
+
+                'path' =>
+                $path,
+
+                'file_type' =>
+                $file->getMimeType(),
+
+                'mime_type' =>
+                $file->getMimeType(),
+
+                'file_size' =>
+                $file->getSize(),
+
+                'size' =>
+                $file->getSize(),
+
+                'uploaded_by' =>
+                $user->user_id,
+
+                'uploaded_at' =>
+                now()->toDateTimeString(),
+
+                'status' =>
+                'active',
+
+                'url' =>
+                asset(
+                    'storage/' . ltrim($path, '/')
+                ),
             ];
         }
 
         /*
-         * Simpan document key dalam draft_data application.
-         *
-         * Jangan overwrite draft_data sedia ada.
+         * Simpan key dokumen ke draft_data supaya bila user
+         * keluar dan masuk semula, langkah upload masih dianggap siap.
          */
         $draftData = is_array($waterApplication->draft_data)
             ? $waterApplication->draft_data
             : [];
 
-        $currentUploadedDocuments =
-            $draftData['uploaded_documents'] ?? [];
+        $uploadedKeys = $draftData['uploaded_documents'] ?? [];
 
-        if (!is_array($currentUploadedDocuments)) {
-            $currentUploadedDocuments = [];
+        if (!is_array($uploadedKeys)) {
+            $uploadedKeys = [];
         }
 
-        if (
-            !in_array(
-                $documentKey,
-                $currentUploadedDocuments,
-                true
-            )
-        ) {
-            $currentUploadedDocuments[] = $documentKey;
+        if (!in_array($documentKey, $uploadedKeys, true)) {
+            $uploadedKeys[] = $documentKey;
         }
 
-        $draftData['uploaded_documents'] =
-            array_values(
-                array_unique($currentUploadedDocuments)
-            );
+        $draftData['uploaded_documents'] = array_values(
+            array_unique($uploadedKeys)
+        );
 
         $waterApplication->draft_data = $draftData;
         $waterApplication->save();
@@ -191,20 +248,23 @@ class WaterApplicationDocumentController extends Controller
             'message' => 'Dokumen berjaya dimuat naik.',
 
             /*
-             * Frontend awak kadang-kadang baca `document`
-             * dan kadang-kadang baca `data`.
+             * Flutter awak sekarang ada kemungkinan baca
+             * result['document'] atau result['data'].
+             *
+             * Jadi kita pulangkan kedua-duanya.
              */
             'document' =>
             count($uploadedDocuments) === 1
                 ? $uploadedDocuments[0]
                 : null,
 
-            'documents' => $uploadedDocuments,
-
             'data' =>
             count($uploadedDocuments) === 1
                 ? $uploadedDocuments[0]
                 : $uploadedDocuments,
+
+            'documents' =>
+            $uploadedDocuments,
         ]);
     }
 
@@ -214,13 +274,6 @@ class WaterApplicationDocumentController extends Controller
         $document
     ) {
         $user = $request->user();
-
-        if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Pengguna tidak sah.',
-            ], 401);
-        }
 
         $waterApplication = LsankApplication::query()
             ->where('application_id', $application)
@@ -234,8 +287,13 @@ class WaterApplicationDocumentController extends Controller
             ], 404);
         }
 
-        $documentRecord = DB::table('lsank_application_documents')
-            ->where('id', $document)
+        $documentRecord = DB::table(
+            'lsank_application_documents'
+        )
+            ->where(
+                'document_id',
+                $document
+            )
             ->where(
                 'application_id',
                 $waterApplication->application_id
@@ -261,52 +319,60 @@ class WaterApplicationDocumentController extends Controller
         }
 
         DB::table('lsank_application_documents')
-            ->where('id', $document)
+            ->where(
+                'document_id',
+                $documentRecord->document_id
+            )
             ->delete();
 
         /*
-         * Semak sama ada document_key tersebut
-         * masih mempunyai fail lain.
+         * Kalau ini fail terakhir bagi document key tersebut,
+         * buang key daripada draft_data.
          */
-        $remainingDocumentCount =
-            DB::table('lsank_application_documents')
-            ->where(
-                'application_id',
-                $waterApplication->application_id
+        $documentKey = trim(
+            (string) ($documentRecord->remarks ?? '')
+        );
+
+        if ($documentKey !== '') {
+            $remainingCount = DB::table(
+                'lsank_application_documents'
             )
-            ->where(
-                'document_key',
-                $documentRecord->document_key
-            )
-            ->count();
+                ->where(
+                    'application_id',
+                    $waterApplication->application_id
+                )
+                ->where(
+                    'remarks',
+                    $documentKey
+                )
+                ->count();
 
-        if ($remainingDocumentCount === 0) {
-            $draftData = is_array(
-                $waterApplication->draft_data
-            )
-                ? $waterApplication->draft_data
-                : [];
+            if ($remainingCount === 0) {
+                $draftData = is_array(
+                    $waterApplication->draft_data
+                )
+                    ? $waterApplication->draft_data
+                    : [];
 
-            $uploadedDocuments =
-                $draftData['uploaded_documents'] ?? [];
+                $uploadedKeys =
+                    $draftData['uploaded_documents']
+                    ?? [];
 
-            if (is_array($uploadedDocuments)) {
-                $uploadedDocuments = array_values(
-                    array_filter(
-                        $uploadedDocuments,
-                        fn($key) =>
-                        (string) $key !==
-                            (string) $documentRecord->document_key
-                    )
-                );
+                if (is_array($uploadedKeys)) {
+                    $draftData['uploaded_documents'] =
+                        array_values(
+                            array_filter(
+                                $uploadedKeys,
+                                fn($item) =>
+                                (string) $item !== $documentKey
+                            )
+                        );
 
-                $draftData['uploaded_documents'] =
-                    $uploadedDocuments;
+                    $waterApplication->draft_data =
+                        $draftData;
 
-                $waterApplication->draft_data =
-                    $draftData;
-
-                $waterApplication->save();
+                    $waterApplication->save();
+                }
             }
         }
 

@@ -26,6 +26,8 @@ use App\Http\Controllers\Api\NotificationPreferenceController;
 use App\Http\Controllers\Api\UserDeviceController;
 use App\Http\Controllers\Api\WaterApplicationDocumentController;
 use App\Http\Controllers\Api\EffluentApplicationDocumentController;
+use App\Http\Controllers\Api\InvoicePdfController;
+use App\Http\Controllers\Api\ReceiptPdfController;
 
 
 /*
@@ -82,6 +84,28 @@ Route::get('/licenses/verify/{token}', [
 
 Route::middleware('auth:sanctum')->group(function () {
 
+    /*
+    |--------------------------------------------------------------------------
+    | Invoice & Receipt PDF
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get(
+        '/invoices/{invoice}/pdf',
+        [
+            InvoicePdfController::class,
+            'download',
+        ]
+    )->whereNumber('invoice');
+
+    Route::get(
+        '/receipts/{receipt}/pdf',
+        [
+            ReceiptPdfController::class,
+            'download',
+        ]
+    )->whereNumber('receipt');
+    
     /*
     |--------------------------------------------------------------------------
     | Document / File Uploads

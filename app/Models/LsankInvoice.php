@@ -72,4 +72,13 @@ class LsankInvoice extends Model
             'invoice_id'
         );
     }
+
+    public function latestPayment(): HasOne
+    {
+        return $this->hasOne(
+            LsankPayment::class,
+            'invoice_id',
+            'invoice_id'
+        )->latestOfMany('payment_id');
+    }
 }

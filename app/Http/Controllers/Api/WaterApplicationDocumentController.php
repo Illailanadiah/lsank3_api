@@ -35,7 +35,6 @@ class WaterApplicationDocumentController extends Controller
 
         $documents = DB::table('lsank_application_documents')
             ->where('application_id', $application)
-            ->where('application_type', 'water')
             ->orderByDesc('id')
             ->get()
             ->map(function ($document) {
@@ -119,11 +118,8 @@ class WaterApplicationDocumentController extends Controller
                 'public'
             );
 
-            $documentId = DB::table(
-                'lsank_application_documents'
-            )->insertGetId([
+            $documentId = DB::table('lsank_application_documents')->insertGetId([
                 'application_id' => $waterApplication->application_id,
-                'application_type' => 'water',
                 'document_key' => $documentKey,
                 'original_name' => $file->getClientOriginalName(),
                 'file_name' => basename($path),
@@ -238,15 +234,12 @@ class WaterApplicationDocumentController extends Controller
             ], 404);
         }
 
-        $documentRecord = DB::table(
-            'lsank_application_documents'
-        )
+        $documentRecord = DB::table('lsank_application_documents')
             ->where('id', $document)
             ->where(
                 'application_id',
                 $waterApplication->application_id
             )
-            ->where('application_type', 'water')
             ->first();
 
         if (!$documentRecord) {
@@ -281,7 +274,6 @@ class WaterApplicationDocumentController extends Controller
                 'application_id',
                 $waterApplication->application_id
             )
-            ->where('application_type', 'water')
             ->where(
                 'document_key',
                 $documentRecord->document_key

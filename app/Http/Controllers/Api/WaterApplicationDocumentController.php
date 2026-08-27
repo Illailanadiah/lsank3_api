@@ -259,6 +259,63 @@ class WaterApplicationDocumentController extends Controller
         ]);
     }
 
+    public function download(
+        Request $request,
+        $application,
+        $document
+    ) {
+        $user = $request->user();
+
+        $waterApplication = LsankApplication::query()
+            ->where('application_id', $application)
+            ->where('user_id', $user->user_id)
+            ->first();
+
+        if (!$waterApplication) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Permohonan tidak dijumpai.',
+            ], 404);
+        }
+
+        $documentRecord = DB::table(
+            'lsank_application_documents'
+        )
+            ->where(
+                'document_id',
+                $document
+            )
+            ->where(
+                'application_id',
+                $waterApplication->application_id
+            )
+            ->first();
+
+        if (!$documentRecord) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Dokumen tidak dijumpai.',
+            ], 404);
+        }
+
+        if (
+            empty($documentRecord->file_path) ||
+            !Storage::disk('public')->exists(
+                $documentRecord->file_path
+            )
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Fail tidak dijumpai dalam storan.',
+            ], 404);
+        }
+
+        return Storage::disk('public')->download(
+            $documentRecord->file_path,
+            $documentRecord->file_name
+        );
+    }
+
     public function destroy(
         Request $request,
         $application,

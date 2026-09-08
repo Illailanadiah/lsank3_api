@@ -28,7 +28,11 @@ use App\Http\Controllers\Api\WaterApplicationDocumentController;
 use App\Http\Controllers\Api\EffluentApplicationDocumentController;
 use App\Http\Controllers\Api\InvoicePdfController;
 use App\Http\Controllers\Api\ReceiptPdfController;
-
+use App\Http\Controllers\Api\ChecklistController;
+use App\Http\Controllers\Api\ContactUsController;
+use App\Http\Controllers\Api\AdminEnquiryController;
+use App\Http\Controllers\Api\AnnouncementController;
+use App\Http\Controllers\Api\AdminAnnouncementController;
 
 /*
 |--------------------------------------------------------------------------
@@ -75,6 +79,69 @@ Route::get('/licenses/verify/{token}', [
     LicenseController::class,
     'verify',
 ])->name('licenses.verify');
+
+/*
+|--------------------------------------------------------------------------
+| Announcements - User
+|--------------------------------------------------------------------------
+*/
+
+Route::get(
+    '/announcements',
+    [AnnouncementController::class, 'index']
+);
+
+Route::get(
+    '/announcements/{announcement}',
+    [AnnouncementController::class, 'show']
+)->whereNumber('announcement');
+
+/*
+|--------------------------------------------------------------------------
+| Senarai Semak / Checklist
+|--------------------------------------------------------------------------
+*/
+
+Route::get(
+    '/checklists',
+    [ChecklistController::class, 'index']
+);
+
+Route::get(
+    '/checklists/{checklist}',
+    [ChecklistController::class, 'show']
+)->whereNumber('checklist');
+
+Route::get(
+    '/checklists/{checklist}/download',
+    [ChecklistController::class, 'download']
+)->whereNumber('checklist');
+
+/*
+|--------------------------------------------------------------------------
+| Senarai Semak / Checklist
+|--------------------------------------------------------------------------
+*/
+
+Route::get(
+    '/contact-us',
+    [ContactUsController::class, 'info']
+);
+
+Route::get(
+    '/enquiries',
+    [ContactUsController::class, 'index']
+);
+
+Route::post(
+    '/enquiries',
+    [ContactUsController::class, 'store']
+);
+
+Route::get(
+    '/enquiries/{enquiry}',
+    [ContactUsController::class, 'show']
+)->whereNumber('enquiry');
 
 /*
 |--------------------------------------------------------------------------
@@ -364,6 +431,70 @@ Route::middleware('auth:sanctum')->group(function () {
     | draf, fi_pemprosesan
     |
     */
+
+    /*
+    |--------------------------------------------------------------------------
+    | Announcements - Admin
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get(
+        '/admin/announcements',
+        [AdminAnnouncementController::class, 'index']
+    );
+
+    Route::post(
+        '/admin/announcements',
+        [AdminAnnouncementController::class, 'store']
+    );
+
+    Route::get(
+        '/admin/announcements/{announcement}',
+        [AdminAnnouncementController::class, 'show']
+    )->whereNumber('announcement');
+
+    Route::put(
+        '/admin/announcements/{announcement}',
+        [AdminAnnouncementController::class, 'update']
+    )->whereNumber('announcement');
+
+    Route::delete(
+        '/admin/announcements/{announcement}',
+        [AdminAnnouncementController::class, 'destroy']
+    )->whereNumber('announcement');
+
+    /*
+    |--------------------------------------------------------------------------
+    | AdminEnquiryController
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get(
+        '/admin/enquiries',
+        [AdminEnquiryController::class, 'index']
+    );
+
+    Route::get(
+        '/admin/enquiries/{enquiry}',
+        [AdminEnquiryController::class, 'show']
+    )->whereNumber('enquiry');
+
+    Route::patch(
+        '/admin/enquiries/{enquiry}/status',
+        [AdminEnquiryController::class, 'updateStatus']
+    )->whereNumber('enquiry');
+
+    Route::delete(
+        '/admin/enquiries/{enquiry}',
+        [AdminEnquiryController::class, 'destroy']
+    )->whereNumber('enquiry');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Applications - Admin
+    |--------------------------------------------------------------------------
+    */
+
 
     Route::get('/admin/applications', [
         ApplicationController::class,

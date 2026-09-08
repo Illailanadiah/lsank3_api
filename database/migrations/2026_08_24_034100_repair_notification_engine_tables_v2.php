@@ -4,7 +4,6 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use RuntimeException;
 
 return new class extends Migration
 {
@@ -33,7 +32,7 @@ return new class extends Migration
 
             if ($deliveryMalformed) {
                 if ($deliveryCount > 0) {
-                    throw new RuntimeException(
+                    throw new \RuntimeException(
                         'lsank_notification_deliveries is malformed '
                         . 'but contains data. Repair aborted.'
                     );

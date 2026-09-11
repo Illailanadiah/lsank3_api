@@ -32,12 +32,13 @@ class LsankEffluentApplication extends Model
         );
     }
 
-    public function serviceType()
-    {
-        return $this->belongsTo(
-            LsankServiceType::class,
-            'service_type_id',
-            'service_type_id'
-        );
-    }
+   public function serviceType()
+{
+    return $this->belongsTo(
+        \App\Models\LsankServiceType::class,
+        'service_type_id',
+        'service_type_id'
+    );
+}
+
 }

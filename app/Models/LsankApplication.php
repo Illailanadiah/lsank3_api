@@ -22,63 +22,60 @@ class LsankApplication extends Model
     public const PAYMENT_SUDAH_BAYAR = 'sudah_bayar';
 
     protected $fillable = [
-        'application_ref_no',
-        'user_id',
+    'application_ref_no',
+    'user_id',
+    'applicant_name',
+    'business_name',
+    'phone',
+    'email',
+    'license_type',
+    'activity_type',
+    'application_type',
+    'payment_status',
+    'application_status',
+    'current_step',
+    'activity_name',
+    'district',
+    'activity_location',
+    'longitude',
+    'latitude',
+    'activity_details',
+    'submitted_at',
+    'remarks',
+    'draft_data',
+    'review_data',
+    'submitted_data',
 
-        'applicant_name',
-        'business_name',
-        'phone',
-        'email',
+    // Normalized reference fields
+    'applicant_type_id',
+    'district_id',
+    'category_id',
+    'is_one_off',
+    'file_running_number',
 
-        'license_type',
-        'activity_type',
-        'application_type',
-        'payment_status',
-        'application_status',
-        'current_step',
-
-        'activity_name',
-        'district',
-        'activity_location',
-        'longitude',
-        'latitude',
-        'activity_details',
-
-        'submitted_at',
-        'remarks',
-
-        'draft_data',
-        'review_data',
-        'submitted_data',
-
-        // Legacy fields. Keep until older controllers/screens are migrated.
-        'applicant_id',
-        'application_type_id',
-        'application_status_id',
-        'application_category',
-
-        'applicant_type',
-        'identity_no',
-        'phone_no',
-        'address',
-
-        'company_name',
-        'registration_no',
-        'business_address',
-        'business_phone',
-        'business_email',
-
-        'responsible_officer_name',
-        'responsible_officer_phone',
-        'responsible_officer_position',
-        'officers',
-
-        'activity_type_id',
-        'operating_days',
-        'operating_time',
-        'recreation_details',
-        'construction_shape',
-    ];
+    // Legacy fields
+    'applicant_id',
+    'application_type_id',
+    'application_status_id',
+    'application_category',
+    'applicant_type',
+    'identity_no',
+    'phone_no',
+    'address',
+    'company_name',
+    'registration_no',
+    'business_address',
+    'business_phone',
+    'business_email',
+    'responsible_officer_name',
+    'responsible_officer_phone',
+    'responsible_officer_position',
+    'officers',
+    'activity_type_id',
+    'operating_days',
+    'operating_time',
+    'recreation_details',
+];
 
     protected $casts = [
         'submitted_at' => 'datetime',
@@ -92,6 +89,8 @@ class LsankApplication extends Model
 
         'longitude' => 'decimal:8',
         'latitude' => 'decimal:8',
+        'is_one_off' => 'boolean',
+        'file_running_number' => 'integer',
     ];
 
     /*
@@ -118,22 +117,46 @@ class LsankApplication extends Model
         );
     }
 
-    public function type()
-    {
-        return $this->belongsTo(
-            LsankApplicationType::class,
-            'application_type_id',
-            'application_type_id'
-        );
-    }
+ public function type()
+{
+    return $this->belongsTo(
+        \App\Models\LsankApplicationType::class,
+        'application_type_id',
+        'application_type_id'
+    );
+}
 
-    /**
-     * Alias used by LicenseController and other newer code.
-     */
-    public function applicationType()
-    {
-        return $this->type();
-    }
+public function applicationTypeMaster()
+{
+    return $this->type();
+}
+
+public function applicantType()
+{
+    return $this->belongsTo(
+        \App\Models\LsankApplicantType::class,
+        'applicant_type_id',
+        'applicant_type_id'
+    );
+}
+
+public function districtMaster()
+{
+    return $this->belongsTo(
+        \App\Models\LsankDistrict::class,
+        'district_id',
+        'district_id'
+    );
+}
+
+public function category()
+{
+    return $this->belongsTo(
+        \App\Models\LsankApplicationCategory::class,
+        'category_id',
+        'category_id'
+    );
+}
 
     public function status()
     {
@@ -143,24 +166,23 @@ class LsankApplication extends Model
             'application_status_id'
         );
     }
+public function waterBody()
+{
+    return $this->hasOne(
+        \App\Models\LsankWaterBodyApplication::class,
+        'application_id',
+        'application_id'
+    );
+}
 
-    public function waterBody()
-    {
-        return $this->hasOne(
-            LsankWaterBodyApplication::class,
-            'application_id',
-            'application_id'
-        );
-    }
-
-    public function effluent()
-    {
-        return $this->hasOne(
-            LsankEffluentApplication::class,
-            'application_id',
-            'application_id'
-        );
-    }
+public function effluent()
+{
+    return $this->hasOne(
+        \App\Models\LsankEffluentApplication::class,
+        'application_id',
+        'application_id'
+    );
+}
 
     public function documents()
     {
@@ -234,18 +256,23 @@ class LsankApplication extends Model
     | Helpers
     |--------------------------------------------------------------------------
     */
+public function isWaterApplication(): bool
+{
+    return strtoupper(
+        (string) $this->applicationTypeMaster?->type_code
+    ) === 'WATER'
+        || strtolower(trim((string) $this->application_type)) === 'water'
+        || $this->license_type === 'Aktiviti Badan Perairan';
+}
 
-    public function isWaterApplication(): bool
-    {
-        return $this->application_type === 'water'
-            || $this->license_type === 'Aktiviti Badan Perairan';
-    }
-
-    public function isEffluentApplication(): bool
-    {
-        return $this->application_type === 'effluent'
-            || $this->license_type === 'Aktiviti Pelepasan Efluen';
-    }
+public function isEffluentApplication(): bool
+{
+    return strtoupper(
+        (string) $this->applicationTypeMaster?->type_code
+    ) === 'EFFLUENT'
+        || strtolower(trim((string) $this->application_type)) === 'effluent'
+        || $this->license_type === 'Aktiviti Pelepasan Efluen';
+}
 
     public function isDraft(): bool
     {

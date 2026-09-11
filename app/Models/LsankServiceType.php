@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class LsankServiceType extends Model
 {
     protected $table = 'lsank_service_types';
+
     protected $primaryKey = 'service_type_id';
 
     protected $fillable = [
@@ -15,4 +16,13 @@ class LsankServiceType extends Model
         'description',
         'status',
     ];
+
+    public function effluentApplications()
+    {
+        return $this->hasMany(
+            LsankEffluentApplication::class,
+            'service_type_id',
+            'service_type_id'
+        );
+    }
 }

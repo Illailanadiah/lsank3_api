@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
 use Throwable;
 use App\Models\LsankLicenseTerminationRequest;
@@ -96,10 +97,25 @@ class LicenseController extends Controller
     /**
      * Return one license.
      */
-    public function show(LsankLicense $license)
+    public function show(
+        Request $request,
+        LsankLicense $license
+    )
     {
+        if (!$this->canAccessLicense($request->user(), $license)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Anda tidak dibenarkan melihat lesen ini.',
+            ], 403);
+        }
+
         $license->load([
-            'application',
+            'application.type',
+            'application.applicantType',
+            'application.districtMaster',
+            'application.category.applicationType',
+            'application.waterBody.activityType',
+            'application.effluent.serviceType',
             'status',
             'terminationRequest'
         ]);
@@ -249,6 +265,31 @@ private function canViewAllLicenses(mixed $user): bool
 
     return false;
 }
+
+/**
+ * Admin/staff may access every licence. A normal user may only access a
+ * licence that belongs to their original application.
+ */
+private function canAccessLicense(
+    mixed $user,
+    LsankLicense $license
+): bool {
+    if ($user === null) {
+        return false;
+    }
+
+    if ($this->canViewAllLicenses($user)) {
+        return true;
+    }
+
+    $userId = (int) (
+        data_get($user, 'user_id')
+        ?? data_get($user, 'id')
+        ?? 0
+    );
+
+    return $userId > 0 && $license->belongsToUser($userId);
+}
     /**
      * Applicant submits a license termination request.
      *
@@ -296,7 +337,12 @@ private function canViewAllLicenses(mixed $user): bool
         }
 
         $license->loadMissing([
-            'application',
+            'application.type',
+            'application.applicantType',
+            'application.districtMaster',
+            'application.category.applicationType',
+            'application.waterBody.activityType',
+            'application.effluent.serviceType',
             'status',
             'terminationRequest',
         ]);
@@ -821,21 +867,161 @@ private function canViewAllLicenses(mixed $user): bool
     }
 
     /**
-     * Download PDF once.
+     * Update the editable licence fields from the admin licence screen.
+     * The original application is kept unchanged. The generated PDF is
+     * invalidated and rebuilt so preview/download never serves stale data.
+     */
+    public function update(
+        Request $request,
+        LsankLicense $license
+    ) {
+        if (!$this->canViewAllLicenses($request->user())) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Anda tidak dibenarkan mengemaskini lesen ini.',
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'license_no' => [
+                'required',
+                'string',
+                'max:100',
+                Rule::unique('lsank_licenses', 'license_no')
+                    ->ignore($license->license_id, 'license_id'),
+            ],
+            'file_no' => ['required', 'string', 'max:100'],
+            'start_date' => ['required', 'date_format:Y-m-d'],
+            'expiry_date' => [
+                'required',
+                'date_format:Y-m-d',
+                'after_or_equal:start_date',
+            ],
+            'status' => ['required', 'string', 'max:50'],
+            'note' => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        $statusInput = strtolower(trim($validated['status']));
+        $statusAliases = [
+            'aktif' => ['aktif', 'active'],
+            'tamat' => ['tamat', 'expired'],
+            'digantung' => ['digantung', 'suspended'],
+            'dibatalkan' => ['dibatalkan', 'cancelled', 'canceled'],
+        ];
+        $acceptedStatuses = $statusAliases[$statusInput] ?? [$statusInput];
+
+        $status = LsankLicenseStatus::query()
+            ->where(function ($query) use ($acceptedStatuses) {
+                foreach ($acceptedStatuses as $value) {
+                    $query->orWhereRaw('LOWER(status_name) = ?', [$value])
+                        ->orWhereRaw('LOWER(status_code) = ?', [$value]);
+                }
+            })
+            ->first();
+
+        if ($status === null) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Status lesen yang dipilih tidak wujud dalam pangkalan data.',
+            ], 422);
+        }
+
+        $oldPdfPath = $license->license_pdf_path;
+        $updatedBy = $request->user()?->user_id
+            ?? $request->user()?->id;
+
+        DB::transaction(function () use (
+            $license,
+            $validated,
+            $status,
+            $updatedBy
+        ): void {
+            $license->forceFill([
+                'license_no' => trim($validated['license_no']),
+                'file_no' => trim($validated['file_no']),
+                'start_date' => $validated['start_date'],
+                'expiry_date' => $validated['expiry_date'],
+                'license_status_id' => $status->license_status_id,
+                'license_pdf_path' => null,
+                'generated_at' => now(),
+            ])->save();
+
+            if (filled($validated['note'] ?? null) && $license->application) {
+                $reviewData = is_array($license->application->review_data)
+                    ? $license->application->review_data
+                    : [];
+                $history = data_get($reviewData, 'license_updates', []);
+                $history = is_array($history) ? $history : [];
+                $history[] = [
+                    'note' => trim($validated['note']),
+                    'updated_at' => now()->toIso8601String(),
+                    'updated_by' => $updatedBy,
+                ];
+                data_set($reviewData, 'license_updates', $history);
+                $license->application->forceFill([
+                    'review_data' => $reviewData,
+                ])->save();
+            }
+        });
+
+        if (filled($oldPdfPath)) {
+            Storage::disk('local')->delete($oldPdfPath);
+        }
+
+        try {
+            $license->refresh();
+            $this->buildArtifacts($license);
+        } catch (Throwable $e) {
+            report($e);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Maklumat lesen disimpan, tetapi PDF gagal dijana semula: '
+                    . $e->getMessage(),
+            ], 500);
+        }
+
+        $license->refresh()->load([
+            'application',
+            'status',
+            'terminationRequest',
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Maklumat lesen berjaya dikemaskini.',
+            'license' => $this->formatLicense($license),
+        ]);
+    }
+
+    /**
+     * Download the licence PDF.
+     *
+     * Normal users may download their own licence. Admin/staff roles may
+     * download any licence. Downloads are not limited to one attempt.
      */
     public function downloadPdf(
         Request $request,
         LsankLicense $license
     ) {
-        if ($license->pdf_downloaded_at !== null) {
+        if (!$this->canAccessLicense($request->user(), $license)) {
             return response()->json([
                 'success' => false,
-                'message' =>
-                'Fail lesen hanya boleh dimuat turun sekali.',
-            ], 409);
+                'message' => 'Anda tidak dibenarkan memuat turun lesen ini.',
+            ], 403);
         }
 
-        $this->ensureArtifacts($license);
+        try {
+            $this->ensureArtifacts($license);
+            $license->refresh();
+        } catch (Throwable $e) {
+            report($e);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'PDF lesen gagal dijana: ' . $e->getMessage(),
+            ], 500);
+        }
 
         if (
             empty($license->license_pdf_path) ||
@@ -869,24 +1055,32 @@ private function canViewAllLicenses(mixed $user): bool
     }
 
     /**
-     * Open PDF inline once for printing.
+     * Open the licence PDF inline for viewing or printing.
      *
-     * Note: the backend can record one print-open event, but the browser
-     * cannot guarantee the user physically printed the document.
+     * Opening the PDF is not limited to one attempt.
      */
     public function printPdf(
         Request $request,
         LsankLicense $license
     ) {
-        if ($license->printed_at !== null) {
+        if (!$this->canAccessLicense($request->user(), $license)) {
             return response()->json([
                 'success' => false,
-                'message' =>
-                'Lesen hanya boleh dibuka untuk cetakan sekali.',
-            ], 409);
+                'message' => 'Anda tidak dibenarkan melihat PDF lesen ini.',
+            ], 403);
         }
 
-        $this->ensureArtifacts($license);
+        try {
+            $this->ensureArtifacts($license);
+            $license->refresh();
+        } catch (Throwable $e) {
+            report($e);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'PDF lesen gagal dijana: ' . $e->getMessage(),
+            ], 500);
+        }
 
         if (
             empty($license->license_pdf_path) ||
@@ -926,6 +1120,13 @@ private function canViewAllLicenses(mixed $user): bool
         Request $request,
         LsankLicense $license
     ) {
+        if (!$this->canAccessLicense($request->user(), $license)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Anda tidak dibenarkan memuat turun kod QR ini.',
+            ], 403);
+        }
+
         if ($license->qr_downloaded_at !== null) {
             return response()->json([
                 'success' => false,
@@ -1119,6 +1320,29 @@ private function canViewAllLicenses(mixed $user): bool
             'data:image/svg+xml;base64,'
             . base64_encode($qrSvg);
 
+        $latestReceipt = DB::table('lsank_receipts as receipts')
+            ->join(
+                'lsank_invoices as invoices',
+                'invoices.invoice_id',
+                '=',
+                'receipts.invoice_id'
+            )
+            ->where('invoices.application_id', $license->application_id)
+            ->where('receipts.status', 'valid')
+            ->orderByDesc('receipts.receipt_date')
+            ->orderByDesc('receipts.receipt_id')
+            ->select([
+                'receipts.receipt_id',
+                'receipts.receipt_no',
+                'receipts.receipt_date',
+                'receipts.amount',
+                'receipts.payment_id',
+                'invoices.invoice_id',
+                'invoices.invoice_no',
+                'invoices.payment_type',
+            ])
+            ->first();
+
         $pdf = Pdf::loadView(
             'licenses.certificate',
             [
@@ -1126,6 +1350,8 @@ private function canViewAllLicenses(mixed $user): bool
                 'application' => $license->application,
                 'qrDataUri' => $qrDataUri,
                 'verificationUrl' => $verificationUrl,
+                'receipt' => $latestReceipt,
+                'receiptNo' => $latestReceipt?->receipt_no,
             ]
         )->setPaper('a4', 'portrait');
 
@@ -1591,20 +1817,86 @@ private function canViewAllLicenses(mixed $user): bool
     );
 }
 
+    private function firstFilledValue(array $values, mixed $fallback = null): mixed
+    {
+        foreach ($values as $value) {
+            if ($value === null) {
+                continue;
+            }
+
+            if (is_string($value)) {
+                $value = trim($value);
+
+                if ($value === '' || $value === '-' || strtolower($value) === 'null') {
+                    continue;
+                }
+            }
+
+            return $value;
+        }
+
+        return $fallback;
+    }
+
     private function formatLicense(
         LsankLicense $license
     ): array {
         $license->loadMissing([
-            'application',
+            'application.type',
+            'application.applicantType',
+            'application.districtMaster',
+            'application.category.applicationType',
+            'application.waterBody.activityType',
+            'application.effluent.serviceType',
             'status',
             'terminationRequest',
         ]);
 
         $application = $license->application;
 
-        $applicationType = strtolower(
-            trim((string) ($application?->application_type ?? ''))
-        );
+        $applicationTypeCode = strtoupper(trim((string) (
+            data_get($application, 'category.applicationType.type_code')
+            ?? data_get($application, 'type.type_code')
+            ?? data_get($application, 'application_type')
+            ?? ''
+        )));
+
+        $applicationType = match (true) {
+            str_contains($applicationTypeCode, 'EFFLUENT'),
+            str_contains($applicationTypeCode, 'EFLUEN'),
+            str_contains($applicationTypeCode, 'PELEPASAN') => 'effluent',
+            default => 'water',
+        };
+
+        $moduleRecord = $applicationType === 'effluent'
+            ? $application?->effluent
+            : $application?->waterBody;
+
+        $activityName = $license->activity_name
+            ?? data_get($application, 'category.category_name')
+            ?? data_get($moduleRecord, 'serviceType.service_name')
+            ?? data_get($moduleRecord, 'activityType.activity_name')
+            ?? data_get($application, 'activity_name')
+            ?? data_get($application, 'activity_type');
+
+        $activityLocation = $this->firstFilledValue([
+            $license->activity_location,
+            data_get($moduleRecord, 'activity_location'),
+            data_get($application, 'activity_location'),
+            data_get($application, 'business_address'),
+        ]);
+
+        $latitude = $this->firstFilledValue([
+            $license->latitude,
+            data_get($moduleRecord, 'latitude'),
+            data_get($application, 'latitude'),
+        ]);
+
+        $longitude = $this->firstFilledValue([
+            $license->longitude,
+            data_get($moduleRecord, 'longitude'),
+            data_get($application, 'longitude'),
+        ]);
         $holderAddress =
             $this->resolveHolderAddress($application);
 
@@ -1635,6 +1927,50 @@ private function canViewAllLicenses(mixed $user): bool
             })
             ->latest('invoice_id')
             ->first();
+
+        // A licence only displays completed payment evidence. Read from
+        // receipts and join the related invoice solely for payment metadata.
+        $receiptItems = DB::table('lsank_receipts as receipts')
+            ->join(
+                'lsank_invoices as invoices',
+                'invoices.invoice_id',
+                '=',
+                'receipts.invoice_id'
+            )
+            ->where('invoices.application_id', $license->application_id)
+            ->where('receipts.status', 'valid')
+            ->orderBy('receipts.receipt_date')
+            ->orderBy('receipts.receipt_id')
+            ->get([
+                'receipts.receipt_id',
+                'receipts.receipt_no',
+                'receipts.invoice_id',
+                'receipts.payment_id',
+                'receipts.receipt_date',
+                'receipts.amount',
+                'receipts.receipt_pdf_path',
+                'receipts.status as receipt_status',
+                'receipts.created_at',
+                'invoices.invoice_no',
+                'invoices.payment_type',
+            ])
+            ->map(static fn (object $receipt): array => [
+                'receipt_id' => $receipt->receipt_id,
+                'receipt_no' => $receipt->receipt_no,
+                'receipt_date' => $receipt->receipt_date,
+                'receipt_status' => $receipt->receipt_status,
+                'amount' => (float) $receipt->amount,
+                'receipt_pdf_path' => $receipt->receipt_pdf_path,
+                'invoice_id' => $receipt->invoice_id,
+                'invoice_no' => $receipt->invoice_no,
+                'payment_id' => $receipt->payment_id,
+                'payment_type' => $receipt->payment_type,
+                'payment_status' => 'paid',
+                'paid' => true,
+                'paid_at' => $receipt->receipt_date
+                    ?? $receipt->created_at,
+            ])
+            ->values();
 
         return [
             'license_id' => $license->license_id,
@@ -1671,27 +2007,10 @@ private function canViewAllLicenses(mixed $user): bool
             'license_type' =>
             $license->license_type,
 
-            'activity_name' =>
-            $license->activity_name,
-
-            'activity_location' =>
-            (
-                $license->activity_location !== null &&
-                trim((string) $license->activity_location) !== '' &&
-                trim((string) $license->activity_location) !== '-'
-            )
-                ? $license->activity_location
-                : data_get($application, 'activity_location'),
-
-            'latitude' =>
-            $license->latitude !== null
-                ? $license->latitude
-                : data_get($application, 'latitude'),
-
-            'longitude' =>
-            $license->longitude !== null
-                ? $license->longitude
-                : data_get($application, 'longitude'),
+            'activity_name' => $activityName,
+            'activity_location' => $activityLocation,
+            'latitude' => $latitude,
+            'longitude' => $longitude,
 
             'application' => $application
                 ? [
@@ -1701,8 +2020,42 @@ private function canViewAllLicenses(mixed $user): bool
                     'application_ref_no' =>
                     $application->application_ref_no,
 
-                    'application_type' =>
-                    $application->application_type,
+                    'application_type' => $applicationType,
+
+                    'application_type_id' =>
+                    $application->application_type_id,
+
+                    'applicant_type_id' =>
+                    $application->applicant_type_id,
+
+                    'district_id' =>
+                    $application->district_id,
+
+                    'category_id' =>
+                    $application->category_id,
+
+                    'is_one_off' =>
+                    (bool) $application->is_one_off,
+
+                    'file_running_number' =>
+                    $application->file_running_number,
+
+                    'applicant_type' =>
+                    data_get($application, 'applicantType.type_name')
+                        ?? $application->applicant_type,
+
+                    'applicant_type_master' =>
+                    $application->applicantType?->toArray(),
+
+                    'district' =>
+                    data_get($application, 'districtMaster.district_name')
+                        ?? $application->getRawOriginal('district'),
+
+                    'district_master' =>
+                    $application->districtMaster?->toArray(),
+
+                    'category' =>
+                    $application->category?->toArray(),
 
                     'applicant_name' =>
                     data_get($application, 'applicant_name'),
@@ -1755,16 +2108,34 @@ private function canViewAllLicenses(mixed $user): bool
                     'activity_type' =>
                     data_get($application, 'activity_type'),
 
-                    'activity_location' =>
-                    data_get($application, 'activity_location'),
+                    'activity_location' => $activityLocation,
 
-                    'latitude' =>
-                    data_get($application, 'latitude'),
+                    'latitude' => $latitude,
 
-                    'longitude' =>
-                    data_get($application, 'longitude'),
+                    'longitude' => $longitude,
+
+                    'water_body' =>
+                    $application->waterBody?->toArray(),
+
+                    'effluent' =>
+                    $application->effluent?->toArray(),
+
+                    'review_data' =>
+                    $application->review_data,
+
+                    'submitted_data' =>
+                    $application->submitted_data,
                 ]
                 : null,
+
+            'water_body' =>
+            $application?->waterBody?->toArray(),
+
+            'effluent' =>
+            $application?->effluent?->toArray(),
+
+            'receipt_items' => $receiptItems,
+            'receipts' => $receiptItems,
 
             'start_date' => optional(
                 $license->start_date
@@ -1804,11 +2175,9 @@ private function canViewAllLicenses(mixed $user): bool
                 $license->terminationRequest
             ),
 
-            'can_download_pdf' =>
-            $license->pdf_downloaded_at === null,
+            'can_download_pdf' => true,
 
-            'can_print' =>
-            $license->printed_at === null,
+            'can_print' => true,
 
             'can_download_qr' =>
             $license->qr_downloaded_at === null,
@@ -1848,5 +2217,30 @@ private function canViewAllLicenses(mixed $user): bool
         $license
     ),
         ];
+
+        return response()->file($absolutePath, [
+    'Content-Type' => 'application/pdf',
+    'Content-Disposition' =>
+        'inline; filename="' . $fileName . '"',
+    'Cache-Control' =>
+        'no-store, no-cache, must-revalidate, max-age=0',
+    'Pragma' => 'no-cache',
+    'Expires' => '0',
+]);
+
+
+return response()->download(
+    $absolutePath,
+    $fileName,
+    [
+        'Content-Type' => 'application/pdf',
+        'Cache-Control' =>
+            'no-store, no-cache, must-revalidate, max-age=0',
+        'Pragma' => 'no-cache',
+        'Expires' => '0',
+    ]
+);
     }
 }
+
+

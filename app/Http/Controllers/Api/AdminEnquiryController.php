@@ -4,7 +4,9 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\LsankEnquiry;
+use App\Models\LsankNotification;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 class AdminEnquiryController extends Controller
@@ -17,6 +19,10 @@ class AdminEnquiryController extends Controller
     {
         $query = LsankEnquiry::query();
 
+        // ========================================================
+        // STATUS FILTER
+        // ========================================================
+
         if (
             $request->filled('status') &&
             $request->status !== 'all'
@@ -27,40 +33,50 @@ class AdminEnquiryController extends Controller
             );
         }
 
+        // ========================================================
+        // SEARCH
+        // ========================================================
+
         if ($request->filled('search')) {
             $search = trim(
                 (string) $request->input('search')
             );
 
-            $query->where(function ($q) use ($search) {
-                $q
-                    ->where(
-                        'name',
-                        'like',
-                        "%{$search}%"
-                    )
-                    ->orWhere(
-                        'email',
-                        'like',
-                        "%{$search}%"
-                    )
-                    ->orWhere(
-                        'phone',
-                        'like',
-                        "%{$search}%"
-                    )
-                    ->orWhere(
-                        'subject',
-                        'like',
-                        "%{$search}%"
-                    )
-                    ->orWhere(
-                        'message',
-                        'like',
-                        "%{$search}%"
-                    );
-            });
+            if ($search !== '') {
+                $query->where(function ($q) use ($search) {
+                    $q
+                        ->where(
+                            'name',
+                            'like',
+                            "%{$search}%"
+                        )
+                        ->orWhere(
+                            'email',
+                            'like',
+                            "%{$search}%"
+                        )
+                        ->orWhere(
+                            'phone_no',
+                            'like',
+                            "%{$search}%"
+                        )
+                        ->orWhere(
+                            'subject',
+                            'like',
+                            "%{$search}%"
+                        )
+                        ->orWhere(
+                            'message',
+                            'like',
+                            "%{$search}%"
+                        );
+                });
+            }
         }
+
+        // ========================================================
+        // GET DATA
+        // ========================================================
 
         $items = $query
             ->orderByRaw("
@@ -119,10 +135,80 @@ class AdminEnquiryController extends Controller
             ],
         ]);
 
-        $enquiry->status =
-            $validated['status'];
+        DB::transaction(function () use (
+            $enquiry,
+            $validated
+        ) {
+            $enquiry->status =
+                $validated['status'];
 
-        $enquiry->save();
+            $enquiry->save();
+
+            // ====================================================
+            // CLOSED
+            // ====================================================
+
+            if ($enquiry->status === 'closed') {
+                $now = now();
+
+                LsankNotification::query()
+                    ->where(
+                        'event_type',
+                        'enquiry_created'
+                    )
+                    ->where(
+                        'related_module',
+                        'enquiry'
+                    )
+                    ->where(
+                        'related_id',
+                        $enquiry->enquiry_id
+                    )
+                    ->update([
+                        'action_completed_at' =>
+                        $now,
+
+                        'is_read' =>
+                        true,
+
+                        'read_at' =>
+                        $now,
+
+                        'updated_at' =>
+                        $now,
+                    ]);
+            }
+
+            // ====================================================
+            // REOPEN
+            // ====================================================
+
+            if (
+                $enquiry->status === 'new' ||
+                $enquiry->status === 'in_progress'
+            ) {
+                LsankNotification::query()
+                    ->where(
+                        'event_type',
+                        'enquiry_created'
+                    )
+                    ->where(
+                        'related_module',
+                        'enquiry'
+                    )
+                    ->where(
+                        'related_id',
+                        $enquiry->enquiry_id
+                    )
+                    ->update([
+                        'action_completed_at' =>
+                        null,
+
+                        'updated_at' =>
+                        now(),
+                    ]);
+            }
+        });
 
         return response()->json([
             'success' => true,
@@ -142,7 +228,33 @@ class AdminEnquiryController extends Controller
     public function destroy(
         LsankEnquiry $enquiry
     ) {
-        $enquiry->delete();
+        $enquiryId =
+            $enquiry->enquiry_id;
+
+        DB::transaction(function () use (
+            $enquiry,
+            $enquiryId
+        ) {
+            /*
+             * Padam notification berkaitan sekali.
+             */
+            LsankNotification::query()
+                ->where(
+                    'event_type',
+                    'enquiry_created'
+                )
+                ->where(
+                    'related_module',
+                    'enquiry'
+                )
+                ->where(
+                    'related_id',
+                    $enquiryId
+                )
+                ->delete();
+
+            $enquiry->delete();
+        });
 
         return response()->json([
             'success' => true,
@@ -174,8 +286,16 @@ class AdminEnquiryController extends Controller
             'email' =>
             $enquiry->email,
 
+            /*
+             * Database guna phone_no.
+             * Flutter admin sekarang masih baca key "phone".
+             * Return dua-dua supaya compatible.
+             */
             'phone' =>
-            $enquiry->phone,
+            $enquiry->phone_no,
+
+            'phone_no' =>
+            $enquiry->phone_no,
 
             'subject' =>
             $enquiry->subject,
@@ -194,14 +314,22 @@ class AdminEnquiryController extends Controller
             'created_at' =>
             optional(
                 $enquiry->created_at
-            )->format('Y-m-d H:i:s'),
+            )->format(
+                'Y-m-d H:i:s'
+            ),
 
             'updated_at' =>
             optional(
                 $enquiry->updated_at
-            )->format('Y-m-d H:i:s'),
+            )->format(
+                'Y-m-d H:i:s'
+            ),
         ];
     }
+
+    // ============================================================
+    // STATUS DISPLAY
+    // ============================================================
 
     private function statusDisplay(
         ?string $status

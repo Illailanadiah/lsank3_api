@@ -79,6 +79,54 @@ Route::get('/licenses/verify/{token}', [
 
 /*
 |--------------------------------------------------------------------------
+| Announcements - User
+|--------------------------------------------------------------------------
+*/
+
+Route::get(
+    '/announcements',
+    [AnnouncementController::class, 'index']
+);
+
+Route::get(
+    '/announcements/{announcement}',
+    [AnnouncementController::class, 'show']
+)->whereNumber('announcement');
+
+/*
+|--------------------------------------------------------------------------
+| Senarai Semak / Checklist
+|--------------------------------------------------------------------------
+*/
+
+Route::get(
+    '/checklists',
+    [ChecklistController::class, 'index']
+);
+
+Route::get(
+    '/checklists/{checklist}',
+    [ChecklistController::class, 'show']
+)->whereNumber('checklist');
+
+Route::get(
+    '/checklists/{checklist}/download',
+    [ChecklistController::class, 'download']
+)->whereNumber('checklist');
+
+/*
+|--------------------------------------------------------------------------
+| Contact Us / User
+|--------------------------------------------------------------------------
+*/
+
+Route::get(
+    '/contact-us',
+    [ContactUsController::class, 'info']
+);
+
+/*
+|--------------------------------------------------------------------------
 | Protected Routes
 |--------------------------------------------------------------------------
 */
@@ -352,6 +400,27 @@ Route::middleware('auth:sanctum')->group(function () {
         ApplicationController::class,
         'requestSecurityRefund',
     ])->whereNumber('invoice');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Enquiries - User
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get(
+        '/enquiries',
+        [ContactUsController::class, 'index']
+    );
+
+    Route::post(
+        '/enquiries',
+        [ContactUsController::class, 'store']
+    );
+
+    Route::get(
+        '/enquiries/{enquiry}',
+        [ContactUsController::class, 'show']
+    )->whereNumber('enquiry');
 
     /*
     |--------------------------------------------------------------------------

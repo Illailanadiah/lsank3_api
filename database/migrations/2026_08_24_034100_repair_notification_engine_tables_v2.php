@@ -32,8 +32,7 @@ return new class extends Migration
 
             if ($deliveryMalformed) {
                 if ($deliveryCount > 0) {
-                    throw new \RuntimeException(
-                        'lsank_notification_deliveries is malformed '
+throw new \RuntimeException(                        'lsank_notification_deliveries is malformed '
                         . 'but contains data. Repair aborted.'
                     );
                 }
@@ -178,7 +177,7 @@ return new class extends Migration
             )->count();
 
             if ($templateCount > 0) {
-                throw new RuntimeException(
+                throw new \RuntimeException(
                     'lsank_notification_templates contains data. '
                     . 'Repair aborted to prevent data loss.'
                 );

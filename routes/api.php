@@ -28,11 +28,8 @@ use App\Http\Controllers\Api\WaterApplicationDocumentController;
 use App\Http\Controllers\Api\EffluentApplicationDocumentController;
 use App\Http\Controllers\Api\InvoicePdfController;
 use App\Http\Controllers\Api\ReceiptPdfController;
-use App\Http\Controllers\Api\ChecklistController;
-use App\Http\Controllers\Api\ContactUsController;
-use App\Http\Controllers\Api\AdminEnquiryController;
-use App\Http\Controllers\Api\AnnouncementController;
-use App\Http\Controllers\Api\AdminAnnouncementController;
+
+
 
 /*
 |--------------------------------------------------------------------------
@@ -437,70 +434,6 @@ Route::middleware('auth:sanctum')->group(function () {
     | draf, fi_pemprosesan
     |
     */
-
-    /*
-    |--------------------------------------------------------------------------
-    | Announcements - Admin
-    |--------------------------------------------------------------------------
-    */
-
-    Route::get(
-        '/admin/announcements',
-        [AdminAnnouncementController::class, 'index']
-    );
-
-    Route::post(
-        '/admin/announcements',
-        [AdminAnnouncementController::class, 'store']
-    );
-
-    Route::get(
-        '/admin/announcements/{announcement}',
-        [AdminAnnouncementController::class, 'show']
-    )->whereNumber('announcement');
-
-    Route::put(
-        '/admin/announcements/{announcement}',
-        [AdminAnnouncementController::class, 'update']
-    )->whereNumber('announcement');
-
-    Route::delete(
-        '/admin/announcements/{announcement}',
-        [AdminAnnouncementController::class, 'destroy']
-    )->whereNumber('announcement');
-
-    /*
-    |--------------------------------------------------------------------------
-    | AdminEnquiryController
-    |--------------------------------------------------------------------------
-    */
-
-    Route::get(
-        '/admin/enquiries',
-        [AdminEnquiryController::class, 'index']
-    );
-
-    Route::get(
-        '/admin/enquiries/{enquiry}',
-        [AdminEnquiryController::class, 'show']
-    )->whereNumber('enquiry');
-
-    Route::patch(
-        '/admin/enquiries/{enquiry}/status',
-        [AdminEnquiryController::class, 'updateStatus']
-    )->whereNumber('enquiry');
-
-    Route::delete(
-        '/admin/enquiries/{enquiry}',
-        [AdminEnquiryController::class, 'destroy']
-    )->whereNumber('enquiry');
-
-    /*
-    |--------------------------------------------------------------------------
-    | Applications - Admin
-    |--------------------------------------------------------------------------
-    */
-
 
     Route::get('/admin/applications', [
         ApplicationController::class,
@@ -1160,6 +1093,12 @@ Route::delete('/devices/{device}', [
 ])
     ->whereNumber('device')
     ->name('devices.destroy');
+
+
+    Route::patch('/admin/licenses/{license}', [
+    LicenseController::class,
+    'update',
+])->whereNumber('license')->name('admin.licenses.update');
 
 /*
 |--------------------------------------------------------------------------

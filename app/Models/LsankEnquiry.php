@@ -14,7 +14,7 @@ class LsankEnquiry extends Model
         'user_id',
         'name',
         'email',
-        'phone',
+        'phone_no',
         'subject',
         'message',
         'status',

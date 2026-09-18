@@ -119,7 +119,7 @@ Route::get(
 
 /*
 |--------------------------------------------------------------------------
-| Senarai Semak / Checklist
+| Contact Us / User
 |--------------------------------------------------------------------------
 */
 
@@ -127,21 +127,6 @@ Route::get(
     '/contact-us',
     [ContactUsController::class, 'info']
 );
-
-Route::get(
-    '/enquiries',
-    [ContactUsController::class, 'index']
-);
-
-Route::post(
-    '/enquiries',
-    [ContactUsController::class, 'store']
-);
-
-Route::get(
-    '/enquiries/{enquiry}',
-    [ContactUsController::class, 'show']
-)->whereNumber('enquiry');
 
 /*
 |--------------------------------------------------------------------------
@@ -418,6 +403,27 @@ Route::middleware('auth:sanctum')->group(function () {
         ApplicationController::class,
         'requestSecurityRefund',
     ])->whereNumber('invoice');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Enquiries - User
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get(
+        '/enquiries',
+        [ContactUsController::class, 'index']
+    );
+
+    Route::post(
+        '/enquiries',
+        [ContactUsController::class, 'store']
+    );
+
+    Route::get(
+        '/enquiries/{enquiry}',
+        [ContactUsController::class, 'show']
+    )->whereNumber('enquiry');
 
     /*
     |--------------------------------------------------------------------------

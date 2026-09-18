@@ -8,6 +8,9 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
+use App\Models\LsankNotification;
+use App\Models\LsankUser;
+use Illuminate\Support\Facades\DB;
 
 class AdminAnnouncementController extends Controller
 {
@@ -227,6 +230,12 @@ class AdminAnnouncementController extends Controller
             $user?->user_id,
         ]);
 
+        if ($announcement->status === 'published') {
+            $this->createAnnouncementNotifications(
+                $announcement
+            );
+        }
+
         Log::info(
             'ADMIN ANNOUNCEMENT CREATED',
             [
@@ -365,6 +374,9 @@ class AdminAnnouncementController extends Controller
         // UPDATE
         // ========================================================
 
+        $previousStatus =
+            $announcement->status;
+            
         $announcement->title =
             trim($validated['title']);
 
@@ -397,6 +409,15 @@ class AdminAnnouncementController extends Controller
             $endAt;
 
         $announcement->save();
+
+        if (
+            $previousStatus !== 'published' &&
+            $announcement->status === 'published'
+        ) {
+            $this->createAnnouncementNotifications(
+                $announcement->fresh()
+            );
+        }
 
         Log::info(
             'ADMIN ANNOUNCEMENT UPDATED',
@@ -445,6 +466,194 @@ class AdminAnnouncementController extends Controller
             'message' =>
             'Pengumuman berjaya dipadam.',
         ]);
+    }
+
+    // ============================================================
+    // CREATE NOTIFICATIONS WHEN PUBLISHED
+    // ============================================================
+
+    private function createAnnouncementNotifications(
+        LsankAnnouncement $announcement
+    ): void {
+        if ($announcement->status !== 'published') {
+            return;
+        }
+
+        $users = LsankUser::query()
+            ->where('status', 'active')
+            ->where(function ($query) {
+                $query
+                    ->whereNull('user_type')
+                    ->orWhereNotIn(
+                        'user_type',
+                        [
+                            'admin',
+                            'super_admin',
+                        ]
+                    );
+            })
+            ->get([
+                'user_id',
+            ]);
+
+        if ($users->isEmpty()) {
+            return;
+        }
+
+        DB::transaction(function () use (
+            $users,
+            $announcement
+        ) {
+            foreach ($users as $user) {
+                $eventKey =
+                    'announcement_published:'
+                    . $announcement->announcement_id
+                    . ':user:'
+                    . $user->user_id;
+
+                LsankNotification::firstOrCreate(
+                    [
+                        'event_key' => $eventKey,
+                    ],
+                    [
+                        'user_id' =>
+                        $user->user_id,
+
+                        'title' =>
+                        $announcement->title,
+
+                        'message' =>
+                        $announcement->message,
+
+                        'notification_type' =>
+                        'in_app',
+
+                        'event_type' =>
+                        'announcement_published',
+
+                        'audience' =>
+                        'user',
+
+                        'severity' =>
+                        $this->announcementSeverity(
+                            $announcement
+                        ),
+
+                        'priority' =>
+                        $this->announcementPriority(
+                            $announcement
+                        ),
+
+                        'related_module' =>
+                        'announcement',
+
+                        'related_id' =>
+                        $announcement->announcement_id,
+
+                        'action_required' =>
+                        false,
+
+                        'action_label' =>
+                        'Lihat Pengumuman',
+
+                        'action_url' =>
+                        '/announcements',
+
+                        'show_as_ribbon' =>
+                        false,
+
+                        'ribbon_duration_seconds' =>
+                        7,
+
+                        'shown_count' =>
+                        0,
+
+                        'is_read' =>
+                        false,
+
+                        'expires_at' =>
+                        $announcement->end_at,
+
+                        'metadata' => [
+                            'announcement_id' =>
+                            $announcement->announcement_id,
+
+                            'category' =>
+                            $announcement->category,
+
+                            'type' =>
+                            $announcement->type,
+
+                            'is_important' =>
+                            (bool) $announcement->is_important,
+
+                            'is_pinned' =>
+                            (bool) $announcement->is_pinned,
+                        ],
+
+                        'sent_at' =>
+                        Carbon::now('Asia/Kuala_Lumpur'),
+                    ]
+                );
+            }
+        });
+
+        Log::info(
+            'ANNOUNCEMENT NOTIFICATIONS CREATED',
+            [
+                'announcement_id' =>
+                $announcement->announcement_id,
+
+                'user_count' =>
+                $users->count(),
+            ]
+        );
+    }
+
+    // ============================================================
+    // NOTIFICATION SEVERITY
+    // ============================================================
+
+    private function announcementSeverity(
+        LsankAnnouncement $announcement
+    ): string {
+        if (
+            (bool) $announcement->is_important ||
+            $announcement->type === 'important'
+        ) {
+            return 'critical';
+        }
+
+        return match ($announcement->type) {
+            'warning',
+            'maintenance' => 'warning',
+
+            default => 'info',
+        };
+    }
+
+    // ============================================================
+    // NOTIFICATION PRIORITY
+    // ============================================================
+
+    private function announcementPriority(
+        LsankAnnouncement $announcement
+    ): int {
+        if (
+            (bool) $announcement->is_important ||
+            $announcement->type === 'important'
+        ) {
+            return 1;
+        }
+
+        if (
+            $announcement->type === 'warning' ||
+            $announcement->type === 'maintenance'
+        ) {
+            return 2;
+        }
+
+        return 3;
     }
 
     // ============================================================
@@ -522,4 +731,6 @@ class AdminAnnouncementController extends Controller
                 : null,
         ];
     }
+
+    
 }

@@ -74,7 +74,204 @@ class EffluentApplicationController extends Controller
             ? $application->draft_data
             : [];
 
+        $controllers = $draftData['controllers'] ?? [];
+
+        if (!is_array($controllers)) {
+            $controllers = [];
+        }
+
+        $borangA = $draftData['borang_a'] ?? [];
+
+        if (!is_array($borangA)) {
+            $borangA = [];
+        }
+
+        $pemohon = $borangA['pemohon'] ?? [];
+
+        if (!is_array($pemohon)) {
+            $pemohon = [];
+        }
+
+        $perniagaan = $borangA['perniagaan'] ?? [];
+
+        if (!is_array($perniagaan)) {
+            $perniagaan = [];
+        }
+
         $effluent = $application->effluent;
+
+        // ============================================================
+        // STATUS
+        // ============================================================
+
+        $isDraft = in_array(
+            strtolower(
+                trim(
+                    (string) $application->application_status
+                )
+            ),
+            [
+                'draf',
+                'draft',
+            ],
+            true
+        );
+
+        // ============================================================
+        // APPLICANT NAME
+        // ============================================================
+
+        $draftApplicantName = trim(
+            (string) (
+                $pemohon['applicant_name']
+                ?? $controllers['Nama Pemohon']
+                ?? ''
+            )
+        );
+
+        if ($isDraft) {
+            $applicantName =
+                $draftApplicantName !== ''
+                ? $draftApplicantName
+                : trim(
+                    (string) (
+                        $application->applicant_name
+                        ?? ''
+                    )
+                );
+        } else {
+            $applicantName = trim(
+                (string) (
+                    $application->applicant_name
+                    ?? $application->applicant?->applicant_name
+                    ?? ''
+                )
+            );
+        }
+
+        if ($applicantName === '') {
+            $applicantName = '-';
+        }
+
+        // ============================================================
+        // BUSINESS / COMPANY NAME
+        // ============================================================
+
+        $draftBusinessName = trim(
+            (string) (
+                $perniagaan['business_name']
+                ?? $controllers['Nama Perniagaan Utama']
+                ?? ''
+            )
+        );
+
+        /*
+     * PENTING:
+     *
+     * Untuk DRAF, jangan sesekali fallback kepada:
+     *
+     * $application->applicant?->company?->company_name
+     *
+     * kerana company relation mungkin datang daripada rekod
+     * terdahulu user/applicant.
+     */
+        if ($isDraft) {
+            $businessName = $draftBusinessName;
+
+            if ($businessName === '') {
+                $businessName = trim(
+                    (string) (
+                        $application->business_name
+                        ?? $application->company_name
+                        ?? ''
+                    )
+                );
+            }
+        } else {
+            $businessName = trim(
+                (string) (
+                    $application->business_name
+                    ?? $application->company_name
+                    ?? $application->applicant?->company?->company_name
+                    ?? ''
+                )
+            );
+        }
+
+        if ($businessName === '') {
+            $businessName = '-';
+        }
+
+        // ============================================================
+        // CONTACT
+        // ============================================================
+
+        $draftPhone = trim(
+            (string) (
+                $pemohon['phone']
+                ?? $controllers['No Telefon']
+                ?? ''
+            )
+        );
+
+        $draftEmail = trim(
+            (string) (
+                $pemohon['email']
+                ?? $controllers['E-mel']
+                ?? ''
+            )
+        );
+
+        $phone = $isDraft
+            ? (
+                $draftPhone !== ''
+                ? $draftPhone
+                : trim(
+                    (string) (
+                        $application->phone
+                        ?? $application->phone_no
+                        ?? ''
+                    )
+                )
+            )
+            : trim(
+                (string) (
+                    $application->phone
+                    ?? $application->phone_no
+                    ?? ''
+                )
+            );
+
+        $email = $isDraft
+            ? (
+                $draftEmail !== ''
+                ? $draftEmail
+                : trim(
+                    (string) (
+                        $application->email
+                        ?? ''
+                    )
+                )
+            )
+            : trim(
+                (string) (
+                    $application->email
+                    ?? $application->applicant?->email
+                    ?? ''
+                )
+            );
+
+        if ($phone === '') {
+            $phone = '-';
+        }
+
+        if ($email === '') {
+            $email = '-';
+        }
+
+        // ============================================================
+        // SERVICE
+        // ============================================================
 
         $serviceName =
             $effluent?->serviceType?->service_name
@@ -82,9 +279,53 @@ class EffluentApplicationController extends Controller
             ?? $draftData['meta']['selected_service_name']
             ?? '-';
 
+        // ============================================================
+        // LOCATION
+        // ============================================================
+
+        $draftLocation = trim(
+            (string) (
+                $draftData['borang_c']['location']['search']
+                ?? $controllers['effluent_discharge_location_1_Carian Lokasi']
+                ?? ''
+            )
+        );
+
+        $activityLocation = $isDraft
+            ? (
+                $draftLocation !== ''
+                ? $draftLocation
+                : trim(
+                    (string) (
+                        $effluent?->activity_location
+                        ?? $application->activity_location
+                        ?? ''
+                    )
+                )
+            )
+            : trim(
+                (string) (
+                    $effluent?->activity_location
+                    ?? $application->activity_location
+                    ?? ''
+                )
+            );
+
+        if ($activityLocation === '') {
+            $activityLocation = '-';
+        }
+
+        // ============================================================
+        // APPLICATION IDS
+        // ============================================================
+
         $applicationIds = [
             $application->application_id,
         ];
+
+        // ============================================================
+        // RESPONSE
+        // ============================================================
 
         return [
             'id' =>
@@ -111,29 +352,19 @@ class EffluentApplicationController extends Controller
             $application->application_category ?? 'new',
 
             'applicant_name' =>
-            $application->applicant?->applicant_name
-                ?? '-',
+            $applicantName,
 
             'business_name' =>
-            $application->business_name
-                ?? $application->company_name
-                ?? $application->applicant?->company?->company_name
-                ?? '-',
+            $businessName,
 
             'company_name' =>
-            $application->company_name
-                ?? $application->business_name
-                ?? $application->applicant?->company?->company_name
-                ?? '-',
+            $businessName,
 
             'phone' =>
-            $application->phone
-                ?? $application->phone_no
-                ?? '-',
+            $phone,
 
             'email' =>
-            $application->email
-                ?? '-',
+            $email,
 
             'license_type' =>
             self::TYPE_NAME,
@@ -154,18 +385,12 @@ class EffluentApplicationController extends Controller
             $serviceName,
 
             'activity_location' =>
-            $effluent?->activity_location
-                ?? $application->activity_location
-                ?? '-',
+            $activityLocation,
 
             'district' =>
             $application->district
                 ?? '-',
 
-            /*
-         * Sama seperti Water:
-         * status column application ialah source of truth.
-         */
             'status_code' =>
             $application->application_status,
 
@@ -1135,14 +1360,64 @@ class EffluentApplicationController extends Controller
             $application->phone_no
             ?? $application->phone;
 
+        $isDraft = in_array(
+            strtolower(
+                trim(
+                    (string) $application->application_status
+                )
+            ),
+            [
+                'draf',
+                'draft',
+            ],
+            true
+        );
+
+        $draftData = is_array(
+            $application->draft_data
+        )
+            ? $application->draft_data
+            : [];
+
+        $draftBusinessName = trim(
+            (string) (
+                $draftData['borang_a']['perniagaan']['business_name']
+                ?? $draftData['controllers']['Nama Perniagaan Utama']
+                ?? ''
+            )
+        );
+
+        if ($isDraft) {
+            $businessName =
+                $draftBusinessName !== ''
+                ? $draftBusinessName
+                : trim(
+                    (string) (
+                        $application->business_name
+                        ?? $application->company_name
+                        ?? ''
+                    )
+                );
+        } else {
+            $businessName = trim(
+                (string) (
+                    $application->business_name
+                    ?? $application->company_name
+                    ?? $application->applicant?->company?->company_name
+                    ?? ''
+                )
+            );
+        }
+
         $detail['company_name'] =
-            $application->company_name
-            ?? $application->applicant?->company?->company_name;
+            $businessName !== ''
+            ? $businessName
+            : null;
 
         $detail['business_name'] =
-            $application->business_name
-            ?? $application->company_name
-            ?? $application->applicant?->company?->company_name;
+            $businessName !== ''
+            ? $businessName
+            : null;
 
         $detail['service_name'] = $serviceName;
         $detail['activity_name'] = $serviceName;

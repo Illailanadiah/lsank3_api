@@ -49,4 +49,13 @@ class LsankWaterBodyApplication extends Model
             'activity_type_id'
         );
     }
+
+    public function vesselDetails()
+{
+    return $this->hasMany(
+        LsankWaterBodyVesselDetail::class,
+        'water_body_id',
+        'water_body_id'
+    );
+}
 }

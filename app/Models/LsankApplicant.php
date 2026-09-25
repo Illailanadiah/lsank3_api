@@ -21,6 +21,15 @@ class LsankApplicant extends Model
         'address',
         'status',
     ];
+    
+    protected $casts = [
+    'draft_data' => 'array',
+    'submitted_data' => 'array',
+    'review_data' => 'array',
+    'recreation_details' => 'array',
+    'officers' => 'array',
+    'submitted_at' => 'datetime',
+];
 
     public function user()
     {

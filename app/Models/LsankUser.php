@@ -4,9 +4,11 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class LsankUser extends Authenticatable
 {
@@ -38,15 +40,42 @@ class LsankUser extends Authenticatable
         'remember_token',
     ];
 
-    protected $casts = [
-        'email_verified_at' => 'datetime',
-        'last_login_at' => 'datetime',
-        'password' => 'hashed',
-    ];
+    protected function casts(): array
+    {
+        return [
+            'email_verified_at' => 'datetime',
+            'last_login_at' => 'datetime',
+            'password' => 'hashed',
+        ];
+    }
 
     /*
     |--------------------------------------------------------------------------
-    | Notification Routing
+    | Notification relationships
+    |--------------------------------------------------------------------------
+    */
+
+    public function notifications(): HasMany
+    {
+        return $this->hasMany(
+            LsankNotification::class,
+            'user_id',
+            'user_id'
+        );
+    }
+
+    public function deviceTokens(): HasMany
+    {
+        return $this->hasMany(
+            LsankUserDeviceToken::class,
+            'user_id',
+            'user_id'
+        );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Notification routing
     |--------------------------------------------------------------------------
     */
 
@@ -55,19 +84,55 @@ class LsankUser extends Authenticatable
     ): ?string {
         $email = trim((string) $this->email);
 
-        return $email !== '' ? $email : null;
+        return filter_var($email, FILTER_VALIDATE_EMAIL)
+            ? $email
+            : null;
+    }
+
+    /**
+     * Return every active FCM token owned by the user.
+     *
+     * @return array<int, string>
+     */
+    public function routeNotificationForFirebase(
+        mixed $notification = null
+    ): array {
+        return $this->deviceTokens()
+            ->pluck('token')
+            ->map(static fn ($token): string => trim((string) $token))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Return a Malaysian phone number in E.164 format for WhatsApp.
+     */
+    public function routeNotificationForWhatsApp(
+        mixed $notification = null
+    ): ?string {
+        $digits = preg_replace('/\D+/', '', (string) $this->phone);
+
+        if (! is_string($digits) || $digits === '') {
+            return null;
+        }
+
+        if (str_starts_with($digits, '0')) {
+            $digits = '60'.substr($digits, 1);
+        }
+
+        if (! str_starts_with($digits, '60')) {
+            return null;
+        }
+
+        return '+'.$digits;
     }
 
     /*
     |--------------------------------------------------------------------------
-    | Role Relationships
+    | Role relationships
     |--------------------------------------------------------------------------
-    |
-    | The existing system currently identifies a user's operational role
-    | through lsank_users.user_type.
-    |
-    | The roles() relationship is provided for lsank_user_roles when the
-    | normalized role tables are used later.
     */
 
     public function roles(): BelongsToMany
@@ -88,13 +153,13 @@ class LsankUser extends Authenticatable
 
     /*
     |--------------------------------------------------------------------------
-    | Query Scopes
+    | Query scopes
     |--------------------------------------------------------------------------
     */
 
     public function scopeActive(Builder $query): Builder
     {
-        return $query->where('status', 'active');
+        return $query->whereRaw('LOWER(TRIM(status)) = ?', ['active']);
     }
 
     public function scopeWithUserTypes(
@@ -102,29 +167,34 @@ class LsankUser extends Authenticatable
         array $userTypes
     ): Builder {
         $normalizedTypes = collect($userTypes)
+            ->map(static fn ($type): string => strtolower(trim((string) $type)))
             ->filter()
-            ->map(
-                fn ($type): string =>
-                    strtolower(trim((string) $type))
-            )
             ->unique()
-            ->values()
-            ->all();
+            ->values();
 
-        return $query->whereIn('user_type', $normalizedTypes);
+        if ($normalizedTypes->isEmpty()) {
+            return $query->whereRaw('1 = 0');
+        }
+
+        $placeholders = $normalizedTypes
+            ->map(static fn (): string => '?')
+            ->implode(', ');
+
+        return $query->whereRaw(
+            "LOWER(TRIM(user_type)) IN ({$placeholders})",
+            $normalizedTypes->all()
+        );
     }
 
     /*
     |--------------------------------------------------------------------------
-    | Role Helpers
+    | Role helpers
     |--------------------------------------------------------------------------
     */
 
     public function normalizedUserType(): string
     {
-        return strtolower(
-            trim((string) $this->user_type)
-        );
+        return strtolower(trim((string) $this->user_type));
     }
 
     public function hasUserType(string $userType): bool
@@ -135,11 +205,11 @@ class LsankUser extends Authenticatable
 
     public function hasAnyUserType(array $userTypes): bool
     {
-        $normalizedUserTypes = array_map(
-            static fn ($type): string =>
-                strtolower(trim((string) $type)),
-            $userTypes
-        );
+        $normalizedUserTypes = collect($userTypes)
+            ->map(static fn ($type): string => strtolower(trim((string) $type)))
+            ->filter()
+            ->unique()
+            ->all();
 
         return in_array(
             $this->normalizedUserType(),
@@ -199,8 +269,28 @@ class LsankUser extends Authenticatable
         ]);
     }
 
+    public function isFinanceTeam(): bool
+    {
+        return $this->hasAnyUserType([
+            'kewangan',
+            'pegawai_kewangan',
+        ]);
+    }
+
     public function isDirector(): bool
     {
-        return $this->hasUserType('ketua_pengarah');
+        return $this->hasAnyUserType([
+            'ketua_pengarah',
+            'pengarah',
+        ]);
     }
+
+    public function deviceTokens(): HasMany
+{
+    return $this->hasMany(
+        LsankDeviceToken::class,
+        'user_id',
+        'user_id'
+    );
+}
 }

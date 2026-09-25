@@ -12,6 +12,7 @@ use App\Models\LsankInvoice;
 use App\Models\LsankPayment;
 use App\Models\LsankReceipt;
 use App\Models\LsankWaterBodyApplication;
+use App\Models\LsankActivityType;
 use App\Services\LicenseService;
 use App\Services\Notifications\NotificationManager;
 use Illuminate\Http\Request;
@@ -44,7 +45,7 @@ class WaterApplicationController extends Controller
                 'applicant.company',
                 'status',
                 'type',
-                'waterBody',
+                'waterBody.activityType',
                 'license.status',
                 'license.terminationRequest',
             ])
@@ -977,7 +978,7 @@ class WaterApplicationController extends Controller
             'applicant.company',
             'status',
             'type',
-            'waterBody',
+            'waterBody.activityType',
             'documents',
             'reviews',
             'license.status',
@@ -994,6 +995,38 @@ class WaterApplicationController extends Controller
         )
             ? $displayApplication->draft_data
             : [];
+
+        $displaySubmittedData = is_array(
+            $displayApplication->submitted_data
+        )
+            ? $displayApplication->submitted_data
+            : [];
+
+        $vesselDetails = $this->normalizeVesselDetails(
+            $displayDraftData['vessel_details']
+                ?? $displayDraftData['vessels']
+                ?? $displayDraftData['borang_d']
+                ?? $displaySubmittedData['vessel_details']
+                ?? $displaySubmittedData['vessels']
+                ?? []
+        );
+
+        $waterBody = $displayApplication->waterBody;
+        $activityType = $waterBody?->activityType;
+        $resolvedActivityName = $activityType?->activity_name
+            ?? $displayApplication->activity_name
+            ?? $displayApplication->activity_details
+            ?? $waterBody?->activity_details
+            ?? 'Aktiviti Badan Perairan';
+
+        $waterBodyPayload = $waterBody?->toArray() ?? [];
+        $waterBodyPayload['activity_type_id'] = $waterBody?->activity_type_id
+            ?? $displayApplication->activity_type_id;
+        $waterBodyPayload['activity_details'] = $waterBody?->activity_details
+            ?? $resolvedActivityName;
+        $waterBodyPayload['activity_type'] = $activityType?->toArray();
+        $waterBodyPayload['vessel_details'] = $vesselDetails;
+        $waterBodyPayload['vessels'] = $vesselDetails;
 
         $detail = $this->formatApplicationDetail($application, self::TYPE_NAME);
         $draftData = is_array($application->draft_data)
@@ -1096,8 +1129,17 @@ class WaterApplicationController extends Controller
             'officers' =>
             $displayApplication->officers ?? [],
 
-            'activity_name' =>
-            $displayApplication->activity_name,
+            'activity_name' => $resolvedActivityName,
+
+            'activity_type_id' =>
+            $waterBody?->activity_type_id
+                ?? $displayApplication->activity_type_id,
+
+            'activity_code' =>
+            $activityType?->activity_code,
+
+            'activity_type_master' =>
+            $activityType?->toArray(),
 
             'activity_details' =>
             $displayApplication->activity_details,
@@ -1123,6 +1165,9 @@ class WaterApplicationController extends Controller
             'recreation_details' =>
             $displayApplication
                 ->recreation_details ?? [],
+            'water_body' => $waterBodyPayload,
+            'vessel_details' => $vesselDetails,
+            'vessels' => $vesselDetails,
             'invoice_items' => $this->formatInvoiceItems($applicationIds),
             'receipt_items' => $this->formatReceiptItems($applicationIds),
             'processing_invoice_activities' =>
@@ -1330,6 +1375,7 @@ class WaterApplicationController extends Controller
             'responsible_officer_position' => ['nullable', 'string', 'max:255'],
             'officers' => ['nullable', 'array'],
             'activity_type_id' => ['nullable', 'integer'],
+            'activity_code' => ['nullable', 'string', 'max:100'],
             'activity_name' => ['nullable', 'string', 'max:255'],
             'district' => ['nullable', 'string', 'max:100'],
             'activity_location' => ['nullable', 'string'],
@@ -1344,11 +1390,17 @@ class WaterApplicationController extends Controller
             'current_step' => ['nullable', 'integer'],
             'draft_data' => ['nullable', 'array'],
             'submitted_data' => ['nullable', 'array'],
+            'vessels' => ['nullable', 'array'],
+            'vessels.*.vessel_type' => ['nullable', 'string', 'max:100'],
+            'vessels.*.vessel_name' => ['nullable', 'string', 'max:255'],
+            'vessels.*.registration_no' => ['nullable', 'string', 'max:150'],
+            'vessels.*.passenger_capacity' => ['nullable', 'integer', 'min:1'],
         ]);
 
         $user = $request->user();
 
         return DB::transaction(function () use ($request, $validated, $user, $allowExisting) {
+            $validated = $this->resolveActivitySelection($validated, $request);
             $typeId = $this->applicationTypeId(self::TYPE_CODE, self::TYPE_NAME);
             $draftStatusId = $this->applicationStatusId('draft', 'Draf', 1);
             $application = null;
@@ -1532,7 +1584,7 @@ class WaterApplicationController extends Controller
         return LsankApplication::query()
             ->with([
                 'applicant.company',
-                'waterBody',
+                'waterBody.activityType',
             ])
             ->where(
                 'application_id',
@@ -2647,8 +2699,153 @@ class WaterApplicationController extends Controller
         $waterBody->operating_time = $validated['operating_time'] ?? null;
         $waterBody->motorized_fee = $validated['motorized_fee'] ?? 0;
         $waterBody->non_motorized_fee = $validated['non_motorized_fee'] ?? 0;
-        $waterBody->activity_details = $validated['activity_details'] ?? null;
+        $waterBody->activity_details = $validated['activity_details']
+            ?? $validated['activity_name']
+            ?? null;
         $waterBody->save();
+    }
+
+    /**
+     * Resolve the activity master record without requiring Flutter to know
+     * the database ID. The ID supplied by the client is still preferred.
+     */
+    private function resolveActivitySelection(
+        array $validated,
+        Request $request
+    ): array {
+        $activityType = null;
+        $activityTypeId = (int) ($validated['activity_type_id'] ?? 0);
+
+        if ($activityTypeId > 0) {
+            $activityType = LsankActivityType::query()
+                ->where('status', 'active')
+                ->find($activityTypeId);
+        }
+
+        $draftData = is_array($validated['draft_data'] ?? null)
+            ? $validated['draft_data']
+            : [];
+
+        $selectedActivities = $draftData['selected_activities']
+            ?? data_get($draftData, 'meta.selected_activities')
+            ?? [];
+
+        $selectedActivity = is_array($selectedActivities)
+            ? collect($selectedActivities)
+                ->map(fn($item) => trim((string) $item))
+                ->first(fn($item) => $item !== '')
+            : null;
+
+        $activityName = trim((string) (
+            $validated['activity_name']
+                ?? $validated['activity_details']
+                ?? $selectedActivity
+                ?? ''
+        ));
+
+        $activityCode = trim((string) (
+            $validated['activity_code']
+                ?? $request->input('activity_code')
+                ?? ''
+        ));
+
+        if (!$activityType && $activityCode !== '') {
+            $activityType = LsankActivityType::query()
+                ->where('status', 'active')
+                ->whereRaw('LOWER(TRIM(activity_code)) = ?', [
+                    mb_strtolower($activityCode),
+                ])
+                ->first();
+        }
+
+        if (!$activityType && $activityName !== '') {
+            $activityType = LsankActivityType::query()
+                ->where('status', 'active')
+                ->whereRaw('LOWER(TRIM(activity_name)) = ?', [
+                    mb_strtolower($activityName),
+                ])
+                ->first();
+        }
+
+        if ($activityType) {
+            $validated['activity_type_id'] =
+                (int) $activityType->activity_type_id;
+            $validated['activity_code'] = $activityType->activity_code;
+            $validated['activity_name'] = $activityType->activity_name;
+            $validated['activity_details'] =
+                $validated['activity_details']
+                    ?? $activityType->activity_name;
+        }
+
+        return $validated;
+    }
+
+    /**
+     * Normalize Borang D keys while retaining any additional fields sent by
+     * the application form.
+     */
+    private function normalizeVesselDetails(mixed $value): array
+    {
+        if (!is_array($value) || $value === []) {
+            return [];
+        }
+
+        if (!array_is_list($value)) {
+            $value = [$value];
+        }
+
+        return collect($value)
+            ->filter(fn($item) => is_array($item))
+            ->map(function (array $item): array {
+                $vesselType = trim((string) (
+                    $item['vessel_type']
+                        ?? $item['vesselType']
+                        ?? $item['type']
+                        ?? $item['jenis_vesel']
+                        ?? ''
+                ));
+
+                $vesselName = trim((string) (
+                    $item['vessel_name']
+                        ?? $item['vesselName']
+                        ?? $item['name']
+                        ?? $item['nama_vesel']
+                        ?? ''
+                ));
+
+                $registrationNo = trim((string) (
+                    $item['registration_no']
+                        ?? $item['registration_number']
+                        ?? $item['registrationNo']
+                        ?? $item['body_no']
+                        ?? $item['no_pendaftaran']
+                        ?? ''
+                ));
+
+                $passengerCapacity = $item['passenger_capacity']
+                    ?? $item['passenger_count']
+                    ?? $item['passengerCapacity']
+                    ?? $item['bilangan_penumpang']
+                    ?? null;
+
+                return array_merge($item, [
+                    'vessel_type' => $vesselType,
+                    'vessel_name' => $vesselName,
+                    'registration_no' => $registrationNo,
+                    'passenger_capacity' => $passengerCapacity === null
+                        || $passengerCapacity === ''
+                            ? null
+                            : (int) $passengerCapacity,
+                ]);
+            })
+            ->filter(function (array $item): bool {
+                return $item['vessel_type'] !== ''
+                    || $item['vessel_name'] !== ''
+                    || $item['registration_no'] !== ''
+                    || $item['passenger_capacity'] !== null;
+            })
+            ->values()
+            ->all();
     }
 
     private function isPaidInvoice(LsankInvoice $invoice): bool
@@ -2778,11 +2975,29 @@ class WaterApplicationController extends Controller
             ? $draftData['recreation_details']
             : ($validated['recreation_details'] ?? []);
 
-        $draftData['vessel_details'] = is_array(
-            $draftData['vessel_details'] ?? null
-        )
-            ? $draftData['vessel_details']
-            : [];
+        $incomingVessels = $validated['vessels']
+            ?? $request->input('vessels')
+            ?? $incoming['vessel_details']
+            ?? $incoming['vessels']
+            ?? $incoming['borang_d']
+            ?? null;
+
+        if ($incomingVessels !== null) {
+            $draftData['vessel_details'] =
+                $this->normalizeVesselDetails($incomingVessels);
+        } else {
+            $draftData['vessel_details'] =
+                $this->normalizeVesselDetails(
+                    $draftData['vessel_details']
+                        ?? $draftData['vessels']
+                        ?? $draftData['borang_d']
+                        ?? []
+                );
+        }
+
+        // Kekalkan alias untuk paparan lama dan baharu.
+        $draftData['vessels'] = $draftData['vessel_details'];
+        $draftData['borang_d'] = $draftData['vessel_details'];
 
         $draftData['cage_details'] = is_array(
             $draftData['cage_details'] ?? null
@@ -2860,10 +3075,18 @@ class WaterApplicationController extends Controller
 
     private function syncWaterBodyForActivity(LsankApplication $application, string $activity): void
     {
+        $activityTypeId = LsankActivityType::query()
+            ->where('status', 'active')
+            ->whereRaw('LOWER(TRIM(activity_name)) = ?', [
+                mb_strtolower(trim($activity)),
+            ])
+            ->value('activity_type_id');
+
         $waterBody = LsankWaterBodyApplication::firstOrNew([
             'application_id' => $application->application_id,
         ]);
-        $waterBody->activity_type_id = $application->activity_type_id;
+        $waterBody->activity_type_id = $activityTypeId
+            ?? $application->activity_type_id;
         $waterBody->activity_location = $application->activity_location;
         $waterBody->longitude = $application->longitude;
         $waterBody->latitude = $application->latitude;

@@ -28,12 +28,8 @@ use App\Http\Controllers\Api\WaterApplicationDocumentController;
 use App\Http\Controllers\Api\EffluentApplicationDocumentController;
 use App\Http\Controllers\Api\InvoicePdfController;
 use App\Http\Controllers\Api\ReceiptPdfController;
-use App\Http\Controllers\Api\ChecklistController;
+use App\Http\Controllers\Api\DeviceTokenController;
 use App\Http\Controllers\Api\AnnouncementController;
-use App\Http\Controllers\Api\ContactUsController;
-use App\Http\Controllers\Api\AdminAnnouncementController;
-use App\Http\Controllers\Api\AdminEnquiryController;
-
 
 
 /*
@@ -1160,6 +1156,12 @@ Route::post('/devices/unregister-all', [
     'unregisterAll',
 ])->name('devices.unregister-all');
 
+
+Route::post(
+    '/notification-devices/test',
+    [DeviceTokenController::class, 'test']
+);
+
 Route::delete('/devices/{device}', [
     UserDeviceController::class,
     'destroy',
@@ -1172,6 +1174,30 @@ Route::delete('/devices/{device}', [
     LicenseController::class,
     'update',
 ])->whereNumber('license')->name('admin.licenses.update');
+
+
+Route::middleware('auth:sanctum')->group(function () {
+    Route::post(
+        '/notification-devices',
+        [DeviceTokenController::class, 'store']
+    );
+
+    Route::delete(
+        '/notification-devices',
+        [DeviceTokenController::class, 'destroy']
+    );
+
+    Route::delete(
+        '/notification-devices/all',
+        [DeviceTokenController::class, 'destroyAll']
+    );
+});
+
+Route::get(
+    '/announcements',
+    [AnnouncementController::class, 'index']
+);
+
 
 /*
 |--------------------------------------------------------------------------

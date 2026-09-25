@@ -424,6 +424,74 @@ Route::middleware('auth:sanctum')->group(function () {
     )->whereNumber('enquiry');
 
     /*
+|--------------------------------------------------------------------------
+| Admin Enquiries
+|--------------------------------------------------------------------------
+*/
+
+    Route::prefix('admin/enquiries')->group(function () {
+
+        Route::get('/', [
+            AdminEnquiryController::class,
+            'index',
+        ]);
+
+        Route::get('/{enquiry}', [
+            AdminEnquiryController::class,
+            'show',
+        ])->whereNumber('enquiry');
+
+        Route::patch('/{enquiry}/status', [
+            AdminEnquiryController::class,
+            'updateStatus',
+        ])->whereNumber('enquiry');
+
+        Route::delete('/{enquiry}', [
+            AdminEnquiryController::class,
+            'destroy',
+        ])->whereNumber('enquiry');
+    });
+
+    /*
+|--------------------------------------------------------------------------
+| Admin Announcements
+|--------------------------------------------------------------------------
+*/
+
+    Route::prefix('admin/announcements')->group(function () {
+
+        Route::get('/', [
+            AdminAnnouncementController::class,
+            'index',
+        ]);
+
+        Route::post('/', [
+            AdminAnnouncementController::class,
+            'store',
+        ]);
+
+        Route::get('/{announcement}', [
+            AdminAnnouncementController::class,
+            'show',
+        ])->whereNumber('announcement');
+
+        Route::put('/{announcement}', [
+            AdminAnnouncementController::class,
+            'update',
+        ])->whereNumber('announcement');
+
+        Route::patch('/{announcement}', [
+            AdminAnnouncementController::class,
+            'update',
+        ])->whereNumber('announcement');
+
+        Route::delete('/{announcement}', [
+            AdminAnnouncementController::class,
+            'destroy',
+        ])->whereNumber('announcement');
+    });
+
+    /*
     |--------------------------------------------------------------------------
     | Admin Side - Applications
     |--------------------------------------------------------------------------

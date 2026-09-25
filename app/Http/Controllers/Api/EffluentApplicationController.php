@@ -755,7 +755,34 @@ class EffluentApplicationController extends Controller
         $statusId = $this->applicationStatusId('draft', 'Draf', 1);
         $phoneColumn = $this->applicantPhoneColumn();
 
-        return DB::transaction(function () use ($validated, $user, $typeId, $statusId, $phoneColumn) {
+        $incomingDraftData = is_array(
+            $validated['draft_data'] ?? null
+        )
+            ? $validated['draft_data']
+            : [];
+
+        $draftApplicantName =
+            data_get(
+                $incomingDraftData,
+                'borang_a.pemohon.applicant_name'
+            )
+            ?? data_get(
+                $incomingDraftData,
+                'controllers.Nama Pemohon'
+            );
+
+        $effectiveApplicantName =
+            $validated['applicant_name']
+            ?? $draftApplicantName;
+
+        return DB::transaction(function () use (
+            $validated,
+            $user,
+            $typeId,
+            $statusId,
+            $phoneColumn,
+            $effectiveApplicantName
+        ) {
             $application = null;
             $requestedApplicationId = $validated['application_id'] ?? null;
 
@@ -815,7 +842,9 @@ class EffluentApplicationController extends Controller
                 $applicant = LsankApplicant::create([
                     'user_id' => $user->user_id,
                     'applicant_type' => $this->normalizeApplicantType($validated['applicant_type'] ?? null),
-                    'applicant_name' => $validated['applicant_name'] ?? $user->name ?? '-',
+                    'applicant_name' =>
+                    $effectiveApplicantName
+                        ?? '-',
                     'identity_no' => $validated['identity_no'] ?? null,
                     'email' => $validated['email'] ?? $user->email ?? null,
                     'address' => $validated['address'] ?? null,
@@ -828,7 +857,9 @@ class EffluentApplicationController extends Controller
                     'user_id' => $user->user_id,
                     'applicant_id' => $applicant->applicant_id,
 
-                    'applicant_name' => $validated['applicant_name'] ?? $user->name ?? '-',
+                    'applicant_name' =>
+                    $effectiveApplicantName
+                        ?? '-',
                     'business_name' => $validated['company_name'] ?? null,
                     'phone' => $validated['phone_no'] ?? $validated['phone'] ?? null,
                     'email' => $validated['email'] ?? $user->email ?? null,
@@ -872,7 +903,9 @@ class EffluentApplicationController extends Controller
                 ]);
             } else {
                 $application->update([
-                    'applicant_name' => $validated['applicant_name'] ?? $application->applicant_name,
+                    'applicant_name' =>
+                    $effectiveApplicantName
+                        ?? $application->applicant_name,
                     'business_name' => $validated['company_name'] ?? $application->business_name,
                     'phone' => $validated['phone_no'] ?? $validated['phone'] ?? $application->phone,
                     'email' => $validated['email'] ?? $application->email,
@@ -909,7 +942,9 @@ class EffluentApplicationController extends Controller
                 if ($applicant) {
                     $applicant->update([
                         'applicant_type' => $this->normalizeApplicantType($validated['applicant_type'] ?? $applicant->applicant_type),
-                        'applicant_name' => $validated['applicant_name'] ?? $applicant->applicant_name,
+                        'applicant_name' =>
+                        $effectiveApplicantName
+                            ?? $applicant->applicant_name,
                         'identity_no' => $validated['identity_no'] ?? $applicant->identity_no,
                         'email' => $validated['email'] ?? $applicant->email,
                         'address' => $validated['address'] ?? $applicant->address,

@@ -28,6 +28,11 @@ use App\Http\Controllers\Api\WaterApplicationDocumentController;
 use App\Http\Controllers\Api\EffluentApplicationDocumentController;
 use App\Http\Controllers\Api\InvoicePdfController;
 use App\Http\Controllers\Api\ReceiptPdfController;
+use App\Http\Controllers\Api\ChecklistController;
+use App\Http\Controllers\Api\AnnouncementController;
+use App\Http\Controllers\Api\ContactUsController;
+use App\Http\Controllers\Api\AdminAnnouncementController;
+use App\Http\Controllers\Api\AdminEnquiryController;
 
 
 
@@ -421,6 +426,74 @@ Route::middleware('auth:sanctum')->group(function () {
         '/enquiries/{enquiry}',
         [ContactUsController::class, 'show']
     )->whereNumber('enquiry');
+
+    /*
+|--------------------------------------------------------------------------
+| Admin Enquiries
+|--------------------------------------------------------------------------
+*/
+
+    Route::prefix('admin/enquiries')->group(function () {
+
+        Route::get('/', [
+            AdminEnquiryController::class,
+            'index',
+        ]);
+
+        Route::get('/{enquiry}', [
+            AdminEnquiryController::class,
+            'show',
+        ])->whereNumber('enquiry');
+
+        Route::patch('/{enquiry}/status', [
+            AdminEnquiryController::class,
+            'updateStatus',
+        ])->whereNumber('enquiry');
+
+        Route::delete('/{enquiry}', [
+            AdminEnquiryController::class,
+            'destroy',
+        ])->whereNumber('enquiry');
+    });
+
+    /*
+|--------------------------------------------------------------------------
+| Admin Announcements
+|--------------------------------------------------------------------------
+*/
+
+    Route::prefix('admin/announcements')->group(function () {
+
+        Route::get('/', [
+            AdminAnnouncementController::class,
+            'index',
+        ]);
+
+        Route::post('/', [
+            AdminAnnouncementController::class,
+            'store',
+        ]);
+
+        Route::get('/{announcement}', [
+            AdminAnnouncementController::class,
+            'show',
+        ])->whereNumber('announcement');
+
+        Route::put('/{announcement}', [
+            AdminAnnouncementController::class,
+            'update',
+        ])->whereNumber('announcement');
+
+        Route::patch('/{announcement}', [
+            AdminAnnouncementController::class,
+            'update',
+        ])->whereNumber('announcement');
+
+        Route::delete('/{announcement}', [
+            AdminAnnouncementController::class,
+            'destroy',
+        ])->whereNumber('announcement');
+    });
 
     /*
     |--------------------------------------------------------------------------

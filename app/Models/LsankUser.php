@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
-use Illuminate\Database\Eloquent\Relations\HasMany;
+use App\Models\LsankDeviceToken;
 
 class LsankUser extends Authenticatable
 {
@@ -67,7 +67,7 @@ class LsankUser extends Authenticatable
     public function deviceTokens(): HasMany
     {
         return $this->hasMany(
-            LsankUserDeviceToken::class,
+LsankDeviceToken::class,
             'user_id',
             'user_id'
         );
@@ -285,12 +285,5 @@ class LsankUser extends Authenticatable
         ]);
     }
 
-    public function deviceTokens(): HasMany
-{
-    return $this->hasMany(
-        LsankDeviceToken::class,
-        'user_id',
-        'user_id'
-    );
-}
+
 }

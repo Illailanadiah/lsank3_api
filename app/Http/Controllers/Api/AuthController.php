@@ -11,6 +11,10 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Str;
+use Carbon\Carbon;
 
 class AuthController extends Controller
 {
@@ -370,6 +374,191 @@ class AuthController extends Controller
         'user' => $user,
     ]);
 }
+
+    public function forgotPassword(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'email'],
+        ]);
+
+        $email = strtolower(trim($validated['email']));
+
+        $user = LsankUser::query()
+            ->whereRaw('LOWER(email) = ?', [$email])
+            ->first();
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'E-mel tidak dijumpai.',
+            ], 404);
+        }
+
+        $verificationCode = (string) random_int(100000, 999999);
+        $resetToken = Str::random(64);
+
+        DB::transaction(function () use (
+            $user,
+            $verificationCode,
+            $resetToken
+        ) {
+            // Padam reset request lama yang masih belum digunakan
+            DB::table('lsank_password_resets')
+                ->where('user_id', $user->user_id)
+                ->whereNull('used_at')
+                ->delete();
+
+            DB::table('lsank_password_resets')->insert([
+                'user_id' => $user->user_id,
+                'reset_token' => $resetToken,
+                'verification_code' => $verificationCode,
+                'expires_at' => now()->addMinutes(10),
+                'used_at' => null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        });
+
+        try {
+            Mail::raw(
+                "Assalamualaikum / Salam Sejahtera {$user->name},\n\n"
+                    . "Kami menerima permintaan untuk menetapkan semula kata laluan "
+                    . "akaun LSANK2U anda.\n\n"
+                    . "Kod pengesahan anda ialah:\n\n"
+                    . "{$verificationCode}\n\n"
+                    . "Kod ini sah selama 10 minit.\n\n"
+                    . "Jika anda tidak membuat permintaan ini, sila abaikan e-mel ini.\n\n"
+                    . "Terima kasih.\n"
+                    . "LSANK2U",
+                function ($message) use ($user) {
+                    $message
+                        ->to($user->email)
+                        ->subject(
+                            'Kod Pengesahan Tetapan Semula Kata Laluan LSANK2U'
+                        );
+                }
+            );
+
+            Log::info('PASSWORD RESET EMAIL SENT', [
+                'user_id' => $user->user_id,
+                'email' => $user->email,
+            ]);
+        } catch (\Throwable $error) {
+            Log::error('PASSWORD RESET EMAIL FAILED', [
+                'user_id' => $user->user_id,
+                'email' => $user->email,
+                'error' => $error->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' =>
+                'Kod berjaya dijana tetapi e-mel gagal dihantar. '
+                    . 'Sila cuba semula.',
+            ], 500);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Kod pengesahan telah dihantar ke e-mel anda.',
+            'reset_token' => $resetToken,
+        ]);
+    }
+
+    public function verifyResetCode(Request $request): JsonResponse
+    {
+        $request->validate([
+            'reset_token' => ['required', 'string'],
+            'verification_code' => ['required', 'string'],
+        ]);
+
+        $reset = DB::table('lsank_password_resets')
+            ->where('reset_token', $request->reset_token)
+            ->where('verification_code', $request->verification_code)
+            ->whereNull('used_at')
+            ->first();
+
+        if (!$reset) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Kod pengesahan tidak sah.',
+            ], 422);
+        }
+
+        if (Carbon::parse($reset->expires_at)->isPast()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Kod pengesahan telah tamat tempoh.',
+            ], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Kod pengesahan berjaya disahkan.',
+            'reset_token' => $reset->reset_token,
+        ]);
+    }
+
+    public function resetPassword(Request $request): JsonResponse
+    {
+        $request->validate([
+            'reset_token' => ['required', 'string'],
+            'password' => [
+                'required',
+                'string',
+                'min:8',
+                'confirmed',
+            ],
+        ]);
+
+        $reset = DB::table('lsank_password_resets')
+            ->where('reset_token', $request->reset_token)
+            ->whereNull('used_at')
+            ->first();
+
+        if (!$reset) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Permintaan tetapan semula kata laluan tidak sah.',
+            ], 422);
+        }
+
+        if (Carbon::parse($reset->expires_at)->isPast()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Permintaan tetapan semula kata laluan telah tamat tempoh.',
+            ], 422);
+        }
+
+        $user = LsankUser::where('user_id', $reset->user_id)->first();
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Pengguna tidak dijumpai.',
+            ], 404);
+        }
+
+        DB::transaction(function () use ($user, $reset, $request) {
+            $user->password = Hash::make($request->password);
+            $user->save();
+
+            DB::table('lsank_password_resets')
+                ->where(
+                    'password_reset_id',
+                    $reset->password_reset_id,
+                )
+                ->update([
+                    'used_at' => now(),
+                    'updated_at' => now(),
+                ]);
+        });
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Kata laluan berjaya ditetapkan semula.',
+        ]);
+    }
 
     public function profile(Request $request): JsonResponse
     {

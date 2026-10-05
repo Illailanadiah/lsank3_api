@@ -34,8 +34,7 @@ use App\Http\Controllers\Api\ChecklistController;
 use App\Http\Controllers\Api\ContactUsController;
 use App\Http\Controllers\Api\AdminAnnouncementController;
 use App\Http\Controllers\Api\AdminEnquiryController;
-
-
+use App\Http\Controllers\Api\HeaderCheckController;
 
 /*
 |--------------------------------------------------------------------------
@@ -1254,8 +1253,7 @@ Route::get(
     '/announcements',
     [AnnouncementController::class, 'index']
 );
-
-
+Route::get('/check-header', [HeaderCheckController::class, 'check']);
 /*
 |--------------------------------------------------------------------------
 | End Protected Routes

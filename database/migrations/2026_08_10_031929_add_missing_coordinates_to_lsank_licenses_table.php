@@ -10,16 +10,18 @@ return new class extends Migration
     {
         Schema::table('lsank_licenses', function (Blueprint $table) {
             if (!Schema::hasColumn('lsank_licenses', 'latitude')) {
-                $table->decimal('latitude', 11, 8)
-                    ->nullable()
-                    ->after('activity_location');
-            }
+    Schema::table('lsank_licenses', function (Blueprint $table) {
+        $table->decimal('latitude', 11, 8)
+            ->nullable()
+            ->after('activity_location');
+    });
+}
 
             if (!Schema::hasColumn('lsank_licenses', 'longitude')) {
-                $table->decimal('longitude', 11, 8)
-                    ->nullable()
-                    ->after('latitude');
-            }
+    Schema::table('lsank_licenses', function (Blueprint $table) {
+        // Letakkan baris asal $table->...('longitude', ...) di sini.
+    });
+}
         });
     }
 
